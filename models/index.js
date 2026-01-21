@@ -1,0 +1,20 @@
+// Export all models from a central file
+module.exports = {
+  User: require('./User'),
+  StaffAttendance: require('./StaffAttendance'),
+  Payroll: require('./Payroll'),
+  Category: require('./Category'),
+  Product: require('./Product'),
+  Unit: require('./Unit'),
+  ProductUnit: require('./ProductUnit'),
+  ProductBatch: require('./ProductBatch'),
+  InventoryLog: require('./InventoryLog'),
+  Recipe: require('./Recipe'),
+  RecipeIngredient: require('./RecipeIngredient'),
+  Coupon: require('./Coupon'),
+  UserCoupon: require('./UserCoupon'),
+  CartItem: require('./CartItem'),
+  Order: require('./Order'),
+  OrderDetail: require('./OrderDetail'),
+  ReturnOrder: require('./ReturnOrder')
+};
