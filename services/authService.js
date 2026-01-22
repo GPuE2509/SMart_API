@@ -59,12 +59,12 @@ exports.signin = async (email, password) => {
     try {
         const user = await users.findOne({ email });
         if (!user) {
-            throw new Error('Invalid credentials');
+            throw new Error('Email hoặc mật khẩu không đúng');
         }
 
         const isPasswordValid = await comparePassword(password, user.password);
         if (!isPasswordValid) {
-            throw new Error('Invalid credentials');
+            throw new Error('Email hoặc mật khẩu không đúng');
         }
 
         const token = generateToken(user);
