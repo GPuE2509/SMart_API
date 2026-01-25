@@ -8,6 +8,7 @@ var cors = require("cors");
 const authRouter = require("./routes/authRouter");
 const productUnitRouter = require("./routes/productUnitRouter");
 const productRouter = require("./routes/productRouter");
+const categoryRouter = require("./routes/categoryRouter");
 
 var app = express();
 
@@ -32,14 +33,16 @@ app.set("views", path.join(__dirname, "views"));
 app.set("view engine", "ejs");
 
 // CORS configuration
-app.use(cors({
-  origin: 'http://localhost:5173', // Vite dev server mặc định chạy ở port 5173
-  credentials: true, // Cho phép gửi cookies
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+app.use(
+  cors({
+    origin: "http://localhost:5173", // Vite dev server mặc định chạy ở port 5173
+    credentials: true, // Cho phép gửi cookies
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
-app.use(logger('dev'));
+app.use(logger("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
@@ -48,6 +51,7 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/product-units", productUnitRouter);
 app.use("/api/v1/products", productRouter);
+app.use("/api/v1/categories", categoryRouter);
 
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {
