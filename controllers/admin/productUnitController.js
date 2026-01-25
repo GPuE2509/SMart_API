@@ -1,4 +1,4 @@
-const productUnitService = require("../services/productUnitService");
+const productUnitService = require("../../services/admin/productUnitService");
 
 /**
  * Get all product units with filters and pagination
@@ -295,7 +295,7 @@ exports.getStats = async (req, res) => {
  */
 exports.getAllUnits = async (req, res) => {
   try {
-    const Unit = require("../models/Unit");
+    const Unit = require("../../models/admin/Unit");
     const units = await Unit.find().sort({ name: 1 });
 
     res.status(200).json({

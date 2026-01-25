@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const productUnitController = require("../controllers/productUnitController");
+const productUnitController = require("../../controllers/admin/productUnitController");
 
 /**
  * Product Unit Routes
