@@ -1,6 +1,6 @@
-const ProductUnit = require("../models/ProductUnit");
-const Product = require("../models/Product");
-const Unit = require("../models/Unit");
+const ProductUnit = require("../../models/admin/ProductUnit");
+const Product = require("../../models/admin/Product");
+const Unit = require("../../models/admin/Unit");
 
 /**
  * Get all product units with filters, search, and pagination

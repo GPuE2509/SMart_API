@@ -1,5 +1,5 @@
-const Product = require("../models/Product");
-const ProductUnit = require("../models/ProductUnit");
+const Product = require("../../models/admin/Product");
+const ProductUnit = require("../../models/admin/ProductUnit");
 
 // Get all products with filters and sort
 exports.getAll = async (req, res) => {

@@ -6,8 +6,8 @@ var cookieParser = require("cookie-parser");
 var logger = require("morgan");
 var cors = require("cors");
 const authRouter = require("./routes/authRouter");
-const productUnitRouter = require("./routes/productUnitRouter");
-const productRouter = require("./routes/productRouter");
+const productUnitRouter = require("./routes/admin/productUnitRouter");
+const productRouter = require("./routes/admin/productRouter");
 
 var app = express();
 
