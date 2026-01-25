@@ -8,24 +8,25 @@ exports.signin = async (req, res) => {
 
         if (!email || !password) {
             return res.status(400).json({
-                message: 'email and password are required'
+                message: 'Email và mật khẩu là bắt buộc'
             });
         }
 
         const result = await authService.signin(email, password);
 
         res.status(200).json({
-            message: 'Login successful',
-            token: result.token
+            message: 'Đăng nhập thành công',
+            token: result.token,
+            user: result.user
         });
     } catch (error) {
-        if (error.message === 'Invalid credentials') {
+        if (error.message === 'Email hoặc mật khẩu không đúng') {
             return res.status(401).json({
                 error: error.message
             });
         }
         res.status(500).json({
-            message: 'Failed to login',
+            message: 'Đăng nhập thất bại',
             error: error.message
         });
     }
