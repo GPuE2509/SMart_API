@@ -1,7 +1,7 @@
 require("dotenv").config();
 const mongoose = require("mongoose");
-const Product = require("./models/Product");
-const Unit = require("./models/Unit");
+const Product = require("./models/admin/Product");
+const Unit = require("./models/admin/Unit");
 
 const seedData = async () => {
   try {
