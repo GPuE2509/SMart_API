@@ -319,7 +319,7 @@ exports.getAllUnits = async (req, res) => {
  */
 exports.getUnitById = async (req, res) => {
   try {
-    const Unit = require("../models/Unit");
+    const Unit = require("../../models/admin/Unit");
     const unit = await Unit.findById(req.params.id);
 
     if (!unit) {
@@ -350,7 +350,7 @@ exports.getUnitById = async (req, res) => {
  */
 exports.createUnit = async (req, res) => {
   try {
-    const Unit = require("../models/Unit");
+    const Unit = require("../../models/admin/Unit");
     const { name } = req.body;
 
     // Validate required fields
@@ -367,6 +367,7 @@ exports.createUnit = async (req, res) => {
     // Only allow letters (including Vietnamese), numbers, and spaces (not at start/end)
     const nameRegex =
       /^[a-zA-Z0-9\u00C0-\u1EF9]+( [a-zA-Z0-9\u00C0-\u1EF9]+)*$/;
+
     if (!nameRegex.test(trimmedName)) {
       return res.status(400).json({
         success: false,
@@ -380,6 +381,7 @@ exports.createUnit = async (req, res) => {
     const existingUnit = await Unit.findOne({
       name: { $regex: `^${escapedName}$`, $options: "i" },
     });
+
     if (existingUnit) {
       return res.status(400).json({
         success: false,
@@ -413,7 +415,7 @@ exports.createUnit = async (req, res) => {
  */
 exports.updateUnit = async (req, res) => {
   try {
-    const Unit = require("../models/Unit");
+    const Unit = require("../../models/admin/Unit");
     const { name } = req.body;
     const unitId = req.params.id;
 
@@ -479,7 +481,7 @@ exports.updateUnit = async (req, res) => {
  */
 exports.deleteUnit = async (req, res) => {
   try {
-    const Unit = require("../models/Unit");
+    const Unit = require("../../models/admin/Unit");
     const unit = await Unit.findById(req.params.id);
 
     if (!unit) {
