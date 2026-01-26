@@ -1,4 +1,3 @@
-
 var createError = require("http-errors");
 require("dotenv").config();
 var express = require("express");
@@ -6,10 +5,11 @@ var path = require("path");
 var cookieParser = require("cookie-parser");
 var logger = require("morgan");
 var cors = require("cors");
-const passport = require('./config/passport');
+const passport = require("./config/passport");
 const authRouter = require("./routes/authRouter");
 const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
+const categoryRouter = require("./routes/admin/categoryRouter");
 
 var app = express();
 
@@ -34,16 +34,18 @@ app.set("views", path.join(__dirname, "views"));
 app.set("view engine", "ejs");
 
 // CORS configuration
-app.use(cors({
-  origin: 'http://localhost:5173', // Vite dev server mặc định chạy ở port 5173
-  credentials: true, // Cho phép gửi cookies
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+app.use(
+  cors({
+    origin: "http://localhost:5173", // Vite dev server mặc định chạy ở port 5173
+    credentials: true, // Cho phép gửi cookies
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
-app.use(logger('dev'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(logger("dev"));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -52,6 +54,7 @@ app.use(passport.initialize());
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/product-units", productUnitRouter);
 app.use("/api/v1/products", productRouter);
+app.use("/api/v1/categories", categoryRouter);
 
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {

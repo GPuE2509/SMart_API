@@ -1,146 +1,18 @@
-const Product = require("../../models/admin/Product");
-const ProductUnit = require("../../models/admin/ProductUnit");
+const productService = require("../../services/admin/productService");
 
-// Get all products with filters and sort
+/**
+ * Get all products with filters, search, and pagination
+ * GET /api/v1/products
+ * Query params: search, category_id, min_price, max_price, sort_by, page, limit
+ */
 exports.getAll = async (req, res) => {
   try {
-    const {
-      search,
-      category_id,
-      min_price,
-      max_price,
-      sort_by = "name",
-      page = 1,
-      limit = 20,
-    } = req.query;
-
-    // Build query
-    let query = { is_active: true };
-
-    // Search by name
-    if (search) {
-      query.name = { $regex: search, $options: "i" };
-    }
-
-    // Filter by category
-    if (category_id) {
-      query.category_id = category_id;
-    }
-
-    // Build sort
-    let sort = {};
-    let needsPriceSort = false;
-
-    switch (sort_by) {
-      case "name":
-        sort = { name: 1 };
-        break;
-      case "price-asc":
-      case "price-desc":
-        needsPriceSort = true; // Sort in memory after getting prices
-        break;
-      case "newest":
-        sort = { createdAt: -1 };
-        break;
-      default:
-        sort = { name: 1 };
-    }
-
-    // If sorting by price OR filtering by price, need to get all products first
-    if (needsPriceSort || min_price || max_price) {
-      let allProducts = await Product.find(query)
-        .populate("category_id", "name")
-        .lean();
-
-      // Get base unit price for each product
-      const productsWithPrice = await Promise.all(
-        allProducts.map(async (product) => {
-          const baseUnit = await ProductUnit.findOne({
-            product_id: product._id,
-            is_base_unit: true,
-            is_active: true,
-          });
-
-          const price = baseUnit?.price || 0;
-          return { ...product, price };
-        }),
-      );
-
-      // Filter by price range
-      let filteredProducts = productsWithPrice.filter((p) => {
-        if (min_price && p.price < parseInt(min_price)) return false;
-        if (max_price && p.price > parseInt(max_price)) return false;
-        return true;
-      });
-
-      // Sort filtered products
-      if (sort_by === "price-asc") {
-        filteredProducts.sort((a, b) => a.price - b.price);
-      } else if (sort_by === "price-desc") {
-        filteredProducts.sort((a, b) => b.price - a.price);
-      } else if (sort_by === "newest") {
-        filteredProducts.sort(
-          (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
-        );
-      } else if (sort_by === "name") {
-        filteredProducts.sort((a, b) => a.name.localeCompare(b.name));
-      }
-
-      // Pagination
-      const total = filteredProducts.length;
-      const skip = (page - 1) * limit;
-      const paginatedProducts = filteredProducts.slice(
-        skip,
-        skip + parseInt(limit),
-      );
-
-      return res.json({
-        success: true,
-        data: paginatedProducts,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          totalPages: Math.ceil(total / limit),
-        },
-      });
-    }
-
-    // No price filter or sort - use efficient DB query
-    const skip = (page - 1) * limit;
-    let products = await Product.find(query)
-      .populate("category_id", "name")
-      .sort(sort)
-      .limit(parseInt(limit))
-      .skip(skip)
-      .lean();
-
-    // Add base unit price to response
-    products = await Promise.all(
-      products.map(async (product) => {
-        const baseUnit = await ProductUnit.findOne({
-          product_id: product._id,
-          is_base_unit: true,
-          is_active: true,
-        });
-
-        const price = baseUnit?.price || 0;
-        return { ...product, price };
-      }),
-    );
-
-    // Get total count
-    const total = await Product.countDocuments(query);
+    const result = await productService.getAllProducts(req.query);
 
     res.json({
       success: true,
-      data: products,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      data: result.products,
+      pagination: result.pagination,
     });
   } catch (error) {
     res.status(500).json({
@@ -150,10 +22,13 @@ exports.getAll = async (req, res) => {
   }
 };
 
-// Get product by ID
+/**
+ * Get product by ID with full details
+ * GET /api/v1/products/:id
+ */
 exports.getById = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await productService.getProductById(req.params.id);
 
     if (!product) {
       return res.status(404).json({
@@ -162,14 +37,120 @@ exports.getById = async (req, res) => {
       });
     }
 
-    res.json({
+    res.status(200).json({
       success: true,
+      message: "Lấy thông tin sản phẩm thành công",
       data: product,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Không thể lấy thông tin sản phẩm",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Create new product
+ * POST /api/v1/products
+ * Body: name, category_id, description, image_url, tax_percentage, price, unit_id
+ */
+exports.create = async (req, res) => {
+  try {
+    const product = await productService.createProduct(req.body);
+
+    res.status(201).json({
+      success: true,
+      message: "Thêm sản phẩm thành công",
+      data: product,
+    });
+  } catch (error) {
+    // Handle validation errors
+    if (
+      error.message === "Tên sản phẩm là bắt buộc" ||
+      error.message === "Danh mục không tồn tại"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Không thể thêm sản phẩm",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Update product
+ * PUT /api/v1/products/:id
+ * Body: name, category_id, description, image_url, tax_percentage, is_active, price
+ */
+exports.update = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const product = await productService.updateProduct(id, req.body);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy sản phẩm",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Cập nhật sản phẩm thành công",
+      data: product,
+    });
+  } catch (error) {
+    // Handle validation errors
+    if (error.message === "Danh mục không tồn tại") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Không thể cập nhật sản phẩm",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Delete product (soft delete - set is_active = false)
+ * DELETE /api/v1/products/:id
+ */
+exports.delete = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await productService.deleteProduct(id);
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy sản phẩm",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Xóa sản phẩm thành công",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Không thể xóa sản phẩm",
+      error: error.message,
     });
   }
 };
