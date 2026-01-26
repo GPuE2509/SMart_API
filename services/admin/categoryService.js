@@ -1,6 +1,6 @@
 const Category = require("../../models/Category");
-const Product = require("../../models/admin/Product");
-const ProductUnit = require("../../models/admin/ProductUnit");
+const Product = require("../../models/Product");
+const ProductUnit = require("../../models/ProductUnit");
 const { uploadImage } = require("../../utils/uploadImage");
 
 /**
