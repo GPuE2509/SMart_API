@@ -11,6 +11,10 @@ const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
 const categoryRouter = require("./routes/admin/categoryRouter");
 
+// Customer routes (public/no admin required)
+const customerProductRouter = require("./routes/customer/productRouter");
+const customerCategoryRouter = require("./routes/customer/categoryRouter");
+
 var app = express();
 
 // CORS configuration
@@ -24,7 +28,7 @@ app.use(
       "http://192.168.1.7:8081", // Expo IP
     ],
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE","PATCH", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
@@ -41,7 +45,15 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // Initialize Passport
 app.use(passport.initialize());
+
+// Auth routes
 app.use("/api/v1/auth", authRouter);
+
+// Customer routes (public - for mobile app)
+app.use("/api/v1/customer/products", customerProductRouter);
+app.use("/api/v1/customer/categories", customerCategoryRouter);
+
+// Admin routes (require admin role)
 app.use("/api/v1/product-units", productUnitRouter);
 app.use("/api/v1/products", productRouter);
 app.use("/api/v1/categories", categoryRouter);
