@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
-const { authenticateUser } = require('../middleware/authMiddleware');
+const { authenticateUser, authorizeRoles } = require('../middleware/authMiddleware');
 const passport = require('../config/passport');
 
 router.post('/signup', authController.signup);
@@ -15,7 +15,7 @@ router.post('/change-password', authenticateUser, authController.changePassword)
 
 // Get current user & logout
 router.get('/me', authenticateUser, authController.me);
-router.post('/logout', authController.logout);
+router.post('/logout', authenticateUser,authController.logout);
 
 // Staff/Admin Login with Email Verification
 router.post('/staff-admin-login', authController.staffAdminLogin);
