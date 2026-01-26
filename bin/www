@@ -8,6 +8,7 @@ var app = require('../app');
 var debug = require('debug')('cainayhuylam:server');
 var http = require('http');
 const connectDB = require('../config/database');
+const { initSocket } = require('../services/socketService');
 
 /**
  * Get port from environment and store in Express.
@@ -30,6 +31,10 @@ connectDB().then(() => {
   server.listen(port);
   server.on('error', onError);
   server.on('listening', onListening);
+  
+  // Initialize Socket.IO
+  initSocket(server);
+  console.log('🔌 Socket.IO initialized');
 }).catch((err) => {
   console.error('Failed to connect to database:', err);
   process.exit(1);
