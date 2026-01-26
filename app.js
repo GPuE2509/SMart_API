@@ -5,6 +5,7 @@ var path = require("path");
 var cookieParser = require("cookie-parser");
 var logger = require("morgan");
 var cors = require("cors");
+const passport = require('./config/passport');
 const authRouter = require("./routes/authRouter");
 const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
@@ -45,6 +46,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
+app.use(passport.initialize());
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/product-units", productUnitRouter);
 app.use("/api/v1/products", productRouter);

@@ -21,6 +21,11 @@ const userSchema = new mongoose.Schema({
     unique: true,
     sparse: true
   },
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
   password: {
     type: String,
     maxlength: 255
@@ -42,6 +47,25 @@ const userSchema = new mongoose.Schema({
   loyalty_points: {
     type: Number,
     default: 0
+  },
+  otp: {
+    type: String
+  },
+  otpExpiry: {
+    type: Date
+  },
+  isVerified: {
+    type: Boolean,
+    default: false
+  },
+  loginToken: {
+    type: String
+  },
+  loginTokenExpiry: {
+    type: Date
+  },
+  loginSessionId: {
+    type: String
   }
 }, {
   timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }
