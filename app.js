@@ -43,7 +43,11 @@ app.use(
   }),
 );
 
-app.use(logger("dev"));
+// Only log errors in production, disable in development
+if (process.env.NODE_ENV === "production") {
+  app.use(logger("combined"));
+}
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 app.use(cookieParser());
