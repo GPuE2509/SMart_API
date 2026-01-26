@@ -1,3 +1,4 @@
+
 var createError = require("http-errors");
 require("dotenv").config();
 var express = require("express");
@@ -46,6 +47,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
+// Initialize Passport
 app.use(passport.initialize());
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/product-units", productUnitRouter);
