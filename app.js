@@ -25,7 +25,8 @@ app.use(
       "http://localhost:5174",
       "http://localhost:8081",
       "http://172.24.32.1:8081", // Mobile device
-      "http://192.168.1.7:8081", // Expo IP
+      "http://192.168.1.7:8081",
+      "http://10.10.10.101:8081", // Expo IP
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
