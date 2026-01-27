@@ -42,11 +42,29 @@ const userSchema = new mongoose.Schema({
   },
   avatar_url: {
     type: String,
-    maxlength: 500
+    maxlength: 500000 // Increased to 500KB for base64 images
   },
   loyalty_points: {
     type: Number,
     default: 0
+  },
+  address: {
+    street: {
+      type: String,
+      maxlength: 500
+    },
+    ward: {
+      type: String,
+      maxlength: 255
+    },
+    district: {
+      type: String,
+      maxlength: 255
+    },
+    city: {
+      type: String,
+      maxlength: 255
+    }
   },
   otp: {
     type: String
