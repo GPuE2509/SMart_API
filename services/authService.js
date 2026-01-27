@@ -63,7 +63,7 @@ exports.signup = async (userData) => {
             }
             
             // If user exists and already verified
-            throw new Error('Email already exists');
+            throw new Error('Email đã tồn tại');
         }
 
         // Hash password

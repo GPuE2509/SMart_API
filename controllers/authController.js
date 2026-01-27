@@ -46,14 +46,14 @@ exports.signup = async (req, res) => {
 
         if (!email || !password || !phone || !full_name) {
             return res.status(400).json({
-                message: 'full_name, phone, email and password are required'
+                message: 'Họ tên, số điện thoại, email và mật khẩu là bắt buộc'
             });
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return res.status(400).json({
-                message: 'Please provide a valid email address'
+                message: 'Vui lòng cung cấp địa chỉ email hợp lệ'
             });
         }
 
@@ -67,30 +67,30 @@ exports.signup = async (req, res) => {
 
         if (password.length < 6) {
             return res.status(400).json({
-                message: 'Password must be at least 6 characters long'
+                message: 'Mật khẩu phải có ít nhất 6 ký tự'
             });
         }
 
         const user = await authService.signup({ full_name, email, password, phone });
 
         res.status(201).json({
-            message: 'Registration successful. Please check your email for OTP verification.',
+            message: 'Đăng ký thành công. Vui lòng kiểm tra email để lấy mã OTP xác thực.',
             userId: user
         });
     } catch (error) {
-        if (error.message === 'Email already exists') {
+        if (error.message === 'Email đã tồn tại') {
             return res.status(409).json({
                 error: 'Email đã được sử dụng và đã xác thực'
             });
         }
         if (error.message.includes('Không thể gửi email')) {
             return res.status(500).json({
-                message: 'Registration successful but failed to send OTP email. Please request resend OTP.',
+                message: 'Đăng ký thành công nhưng không thể gửi email OTP. Vui lòng yêu cầu gửi lại OTP.',
                 error: error.message
             });
         }
         res.status(500).json({
-            message: 'Failed to register user',
+            message: 'Đăng ký người dùng thất bại',
             error: error.message
         });
     }
@@ -103,7 +103,7 @@ exports.verifyOTP = async (req, res) => {
 
         if (!email || !otp) {
             return res.status(400).json({
-                message: 'Email and OTP are required'
+                message: 'Email và mã OTP là bắt buộc'
             });
         }
 
@@ -135,7 +135,7 @@ exports.verifyOTP = async (req, res) => {
             });
         }
         res.status(500).json({
-            message: 'Failed to verify OTP',
+            message: 'Xác thực OTP thất bại',
             error: error.message
         });
     }
@@ -148,7 +148,7 @@ exports.resendOTP = async (req, res) => {
 
         if (!email) {
             return res.status(400).json({
-                message: 'Email is required'
+                message: 'Email là bắt buộc'
             });
         }
 
@@ -175,7 +175,7 @@ exports.resendOTP = async (req, res) => {
             });
         }
         res.status(500).json({
-            message: 'Failed to resend OTP',
+            message: 'Gửi lại OTP thất bại',
             error: error.message
         });
     }
@@ -188,14 +188,14 @@ exports.forgotPassword = async (req, res) => {
 
         if (!email) {
             return res.status(400).json({
-                message: 'Email is required'
+                message: 'Email là bắt buộc'
             });
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return res.status(400).json({
-                message: 'Please provide a valid email address'
+                message: 'Vui lòng cung cấp địa chỉ email hợp lệ'
             });
         }
 
@@ -222,7 +222,7 @@ exports.forgotPassword = async (req, res) => {
             });
         }
         res.status(500).json({
-            message: 'Failed to send password reset OTP',
+            message: 'Gửi OTP đặt lại mật khẩu thất bại',
             error: error.message
         });
     }
@@ -235,7 +235,7 @@ exports.verifyPasswordResetOTP = async (req, res) => {
 
         if (!email || !otp) {
             return res.status(400).json({
-                message: 'Email and OTP are required'
+                message: 'Email và mã OTP là bắt buộc'
             });
         }
 
@@ -259,7 +259,7 @@ exports.verifyPasswordResetOTP = async (req, res) => {
             });
         }
         res.status(500).json({
-            message: 'Failed to verify OTP',
+            message: 'Xác thực OTP thất bại',
             error: error.message
         });
     }
@@ -272,13 +272,13 @@ exports.resetPassword = async (req, res) => {
 
         if (!email || !otp || !newPassword) {
             return res.status(400).json({
-                message: 'Email, OTP and new password are required'
+                message: 'Email, mã OTP và mật khẩu mới là bắt buộc'
             });
         }
 
         if (newPassword.length < 6) {
             return res.status(400).json({
-                message: 'Password must be at least 6 characters long'
+                message: 'Mật khẩu phải có ít nhất 6 ký tự'
             });
         }
 
@@ -310,7 +310,7 @@ exports.resetPassword = async (req, res) => {
             });
         }
         res.status(500).json({
-            message: 'Failed to reset password',
+            message: 'Đặt lại mật khẩu thất bại',
             error: error.message
         });
     }
@@ -323,13 +323,13 @@ exports.changePassword = async (req, res) => {
 
         if (!oldPassword || !newPassword) {
             return res.status(400).json({
-                message: 'Old password and new password are required'
+                message: 'Mật khẩu cũ và mật khẩu mới là bắt buộc'
             });
         }
 
         if (newPassword.length < 6) {
             return res.status(400).json({
-                message: 'New password must be at least 6 characters long'
+                message: 'Mật khẩu mới phải có ít nhất 6 ký tự'
             });
         }
 
@@ -358,7 +358,7 @@ exports.changePassword = async (req, res) => {
             });
         }
         res.status(500).json({
-            message: 'Failed to change password',
+            message: 'Đổi mật khẩu thất bại',
             error: error.message
         });
     }
@@ -394,7 +394,7 @@ exports.googleCallback = async (req, res) => {
         });
     } catch (error) {
         res.status(500).json({
-            message: 'Google authentication failed',
+            message: 'Xác thực Google thất bại',
             error: error.message
         });
     }
@@ -403,8 +403,8 @@ exports.googleCallback = async (req, res) => {
 // Google OAuth Error Handler
 exports.googleAuthError = (req, res) => {
     res.status(401).json({
-        message: 'Google authentication failed',
-        error: 'Authentication was cancelled or failed'
+        message: 'Xác thực Google thất bại',
+        error: 'Xác thực đã bị hủy hoặc thất bại'
     });
 };
 
@@ -415,14 +415,14 @@ exports.staffAdminLogin = async (req, res) => {
 
         if (!email || !password || !sessionId) {
             return res.status(400).json({
-                message: 'Email, password and sessionId are required'
+                message: 'Email, mật khẩu và session ID là bắt buộc'
             });
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return res.status(400).json({
-                message: 'Please provide a valid email address'
+                message: 'Vui lòng cung cấp địa chỉ email hợp lệ'
             });
         }
 
@@ -459,7 +459,7 @@ exports.staffAdminLogin = async (req, res) => {
             });
         }
         res.status(500).json({
-            message: 'Failed to process login request',
+            message: 'Xử lý yêu cầu đăng nhập thất bại',
             error: error.message
         });
     }
@@ -472,13 +472,13 @@ exports.verifyStaffAdminLogin = async (req, res) => {
 
         if (!token || !action) {
             return res.status(400).json({
-                message: 'Token and action are required'
+                message: 'Token và hành động là bắt buộc'
             });
         }
 
         if (action !== 'approve' && action !== 'deny') {
             return res.status(400).json({
-                message: 'Invalid action. Must be "approve" or "deny"'
+                message: 'Hành động không hợp lệ. Phải là "approve" hoặc "deny"'
             });
         }
 
