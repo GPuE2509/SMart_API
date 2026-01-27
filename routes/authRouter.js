@@ -11,10 +11,10 @@ router.post('/resend-otp', authController.resendOTP);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/verify-password-reset-otp', authController.verifyPasswordResetOTP);
 router.post('/reset-password', authController.resetPassword);
-router.post('/change-password', authenticateUser, authController.changePassword);
+router.post('/change-password', authenticateUser, authorizeRoles(['customer', 'admin', 'seller_staff', 'repository_staff']), authController.changePassword);
 
 // Get current user & logout
-router.get('/me', authenticateUser, authController.me);
+router.get('/me', authenticateUser, authorizeRoles(['customer', 'admin', 'seller_staff', 'repository_staff']), authController.me);
 router.post('/logout', authenticateUser,authController.logout);
 
 // Staff/Admin Login with Email Verification
