@@ -15,7 +15,7 @@ exports.signin = async (req, res) => {
 
         const result = await authService.signin(email, password);
 
-        // Set HTTP-only cookie
+        // Set HTTP-only cookie (for web)
         res.cookie('token', result.token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
@@ -25,6 +25,38 @@ exports.signin = async (req, res) => {
 
         res.status(200).json({
             message: 'Đăng nhập thành công',
+            user: result.user
+        });
+    } catch (error) {
+        if (error.message === 'Email hoặc mật khẩu không đúng') {
+            return res.status(401).json({
+                error: error.message
+            });
+        }
+        res.status(500).json({
+            message: 'Đăng nhập thất bại',
+            error: error.message
+        });
+    }
+};
+
+// Mobile Signin - Returns token in response for mobile apps
+exports.mobileSignin = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({
+                message: 'Email và mật khẩu là bắt buộc'
+            });
+        }
+
+        const result = await authService.signin(email, password);
+
+        // Return token in response for mobile apps
+        res.status(200).json({
+            message: 'Đăng nhập thành công',
+            token: result.token,
             user: result.user
         });
     } catch (error) {

@@ -22,6 +22,16 @@ const productSchema = new mongoose.Schema(
       type: String,
       maxlength: 1000, // Cloudinary URL
     },
+    additional_images: {
+      type: [String], // Array of image URLs for product gallery
+      default: [],
+      validate: {
+        validator: function(images) {
+          return images.length <= 10; // Maximum 10 additional images
+        },
+        message: 'Maximum 10 additional images allowed'
+      }
+    },
     tax_percentage: {
       type: Number,
       default: 8.0,

@@ -209,7 +209,7 @@ exports.getProductById = async (id) => {
 
 /**
  * Create new product
- * @param {Object} productData - { name, category_id, description, image_url, tax_percentage, price, unit_id }
+ * @param {Object} productData - { name, category_id, description, image_url, additional_images, tax_percentage, price, unit_id }
  * @returns {Object} - Created product
  */
 exports.createProduct = async (productData) => {
@@ -218,6 +218,7 @@ exports.createProduct = async (productData) => {
     category_id,
     description,
     image_url,
+    additional_images,
     tax_percentage,
     price,
     unit_id,
@@ -249,6 +250,7 @@ exports.createProduct = async (productData) => {
     category_id: category_id || null,
     description: description || "",
     image_url: uploadedImageUrl,
+    additional_images: additional_images || [],
     tax_percentage: tax_percentage !== undefined ? tax_percentage : 8.0,
     total_stock: 0,
     is_active: is_active !== undefined ? is_active : true,
@@ -290,7 +292,7 @@ exports.createProduct = async (productData) => {
 /**
  * Update product
  * @param {String} id - Product ID
- * @param {Object} updateData - { name, category_id, description, image_url, tax_percentage, is_active, price }
+ * @param {Object} updateData - { name, category_id, description, image_url, additional_images, tax_percentage, is_active, price }
  * @returns {Object} - Updated product
  */
 exports.updateProduct = async (id, updateData) => {
@@ -299,6 +301,7 @@ exports.updateProduct = async (id, updateData) => {
     category_id,
     description,
     image_url,
+    additional_images,
     tax_percentage,
     is_active,
     price,
@@ -330,6 +333,7 @@ exports.updateProduct = async (id, updateData) => {
   if (category_id !== undefined) updateFields.category_id = category_id;
   if (description !== undefined) updateFields.description = description;
   if (uploadedImageUrl !== undefined) updateFields.image_url = uploadedImageUrl;
+  if (additional_images !== undefined) updateFields.additional_images = additional_images;
   if (tax_percentage !== undefined)
     updateFields.tax_percentage = tax_percentage;
   if (is_active !== undefined) updateFields.is_active = is_active;

@@ -6,6 +6,7 @@ const passport = require('../config/passport');
 
 router.post('/signup', authController.signup);
 router.post('/signin', authController.signin);
+router.post('/mobile/signin', authController.mobileSignin); // Mobile signin with token in response
 router.post('/verify-otp', authController.verifyOTP);
 router.post('/resend-otp', authController.resendOTP);
 router.post('/forgot-password', authController.forgotPassword);
