@@ -7,6 +7,7 @@ var logger = require("morgan");
 var cors = require("cors");
 const passport = require("./config/passport");
 const authRouter = require("./routes/authRouter");
+const userRouter = require("./routes/userRouter");
 const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
 const categoryRouter = require("./routes/admin/categoryRouter");
@@ -27,7 +28,8 @@ app.use(
       "http://localhost:5174",
       "http://localhost:8081",
       "http://172.24.32.1:8081", // Mobile device
-      "http://192.168.1.7:8081", // Expo IP
+      "http://192.168.1.7:8081",
+      "http://10.10.10.101:8081", // Expo IP
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -44,13 +46,13 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
-
+  
 // Initialize Passport
 app.use(passport.initialize());
 
 // Auth routes
 app.use("/api/v1/auth", authRouter);
-
+app.use("/api/v1/users", userRouter);
 // Customer routes (public - for mobile app)
 app.use("/api/v1/customer/products", customerProductRouter);
 app.use("/api/v1/customer/categories", customerCategoryRouter);
