@@ -3,10 +3,7 @@ const ProductUnit = require("../../models/ProductUnit");
 const Category = require("../../models/Category");
 const { uploadImage } = require("../../utils/uploadImage");
 
-/**
- * Helper function to remove Vietnamese diacritics
- * Converts: "Sữa Vinamilk" -> "sua vinamilk"
- */
+
 const removeVietnameseDiacritics = (str) => {
   if (!str) return "";
   return str
@@ -17,11 +14,7 @@ const removeVietnameseDiacritics = (str) => {
     .toLowerCase();
 };
 
-/**
- * Get all products with filters, search, and pagination
- * @param {Object} filters - { search, category_id, is_active, min_price, max_price, sort_by, page, limit }
- * @returns {Object} - { products, pagination }
- */
+
 exports.getAllProducts = async (filters) => {
   const {
     search,

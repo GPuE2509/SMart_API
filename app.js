@@ -10,6 +10,8 @@ const authRouter = require("./routes/authRouter");
 const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
 const categoryRouter = require("./routes/admin/categoryRouter");
+const productBatchRouter = require("./routes/admin/productBatchRouter");
+const couponRouter = require("./routes/admin/couponRouter");
 
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");
@@ -57,6 +59,8 @@ app.use("/api/v1/customer/categories", customerCategoryRouter);
 app.use("/api/v1/product-units", productUnitRouter);
 app.use("/api/v1/products", productRouter);
 app.use("/api/v1/categories", categoryRouter);
+app.use("/api/v1/product-batches", productBatchRouter);
+app.use("/api/v1/coupons", couponRouter);
 
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {
