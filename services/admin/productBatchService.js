@@ -1,6 +1,5 @@
 const ProductBatch = require("../../models/ProductBatch");
 const InventoryLog = require("../../models/InventoryLog");
-const Product = require("../../models/Product");
 
 /**
  * Search/filter product batches
@@ -34,9 +33,9 @@ exports.getAllBatches = async (filters) => {
     query.batch_code = { $regex: batch_code, $options: "i" };
   }
 
-  // Filter by product_id
+  // Filter by product_id (check if any item contains this product)
   if (product_id) {
-    query.product_id = product_id;
+    query["items.product_id"] = product_id;
   }
 
   // Filter by status
@@ -44,14 +43,14 @@ exports.getAllBatches = async (filters) => {
     query.status = status;
   }
 
-  // Filter by expiry_date range
+  // Filter by expiry_date range (check if any item matches)
   if (expiry_date_from || expiry_date_to) {
-    query.expiry_date = {};
+    query["items.expiry_date"] = {};
     if (expiry_date_from) {
-      query.expiry_date.$gte = new Date(expiry_date_from);
+      query["items.expiry_date"].$gte = new Date(expiry_date_from);
     }
     if (expiry_date_to) {
-      query.expiry_date.$lte = new Date(expiry_date_to);
+      query["items.expiry_date"].$lte = new Date(expiry_date_to);
     }
   }
 
@@ -61,12 +60,6 @@ exports.getAllBatches = async (filters) => {
   switch (sort_by) {
     case "batch_code":
       sort = { batch_code: sortOrder };
-      break;
-    case "expiry_date":
-      sort = { expiry_date: sortOrder };
-      break;
-    case "quantity_current":
-      sort = { quantity_current: sortOrder };
       break;
     case "created_at":
     default:
@@ -79,16 +72,23 @@ exports.getAllBatches = async (filters) => {
 
   const [batches, total] = await Promise.all([
     ProductBatch.find(query)
-      .populate("product_id", "name image_url")
+      .populate("items.product_id", "name image_url")
+      .populate("items.unit_id", "name abbreviation")
       .sort(sort)
       .limit(limitNum)
       .skip(skip)
-      .lean(),
+      .lean({ virtuals: true }),
     ProductBatch.countDocuments(query),
   ]);
 
+  // Ensure batch_code is set (same as _id)
+  const batchesWithCode = batches.map((batch) => ({
+    ...batch,
+    batch_code: batch._id,
+  }));
+
   return {
-    batches,
+    batches: batchesWithCode,
     pagination: {
       page: pageNum,
       limit: limitNum,
@@ -105,9 +105,14 @@ exports.getAllBatches = async (filters) => {
  */
 exports.getBatchById = async (batchId) => {
   const batch = await ProductBatch.findById(batchId)
-    .populate("product_id", "name image_url category_id")
+    .populate("items.product_id", "name image_url category_id")
+    .populate("items.unit_id", "name abbreviation")
     .populate("deleted_by", "full_name email")
-    .lean();
+    .lean({ virtuals: true });
+
+  if (batch) {
+    batch.batch_code = batch._id;
+  }
 
   return batch;
 };
@@ -162,26 +167,32 @@ exports.rejectBatch = async (batchId, userId, note) => {
     throw new Error("Lô hàng này đã bị từ chối trước đó");
   }
 
-  // Create inventory log for the rejection
-  const inventoryLog = await InventoryLog.create({
-    product_batch_id: batchId,
-    quantity_change: -batch.quantity_current, // Negative to indicate removal
-    reason_type: "rejection",
-    note: note || "Từ chối lô hàng mới nhập",
-    created_by: userId,
-  });
+  // Create inventory logs for each item in the batch
+  const inventoryLogs = [];
+  for (const item of batch.items) {
+    const log = await InventoryLog.create({
+      product_batch_id: batchId,
+      batch_item_id: item._id,
+      product_id: item.product_id,
+      unit_id: item.unit_id,
+      quantity_change: -item.quantity, // Negative to indicate removal
+      reason_type: "rejection",
+      note: note || "Từ chối lô hàng mới nhập",
+      created_by: userId,
+    });
+    inventoryLogs.push(log);
+  }
 
   // Soft delete the batch
   batch.is_deleted = true;
   batch.deleted_at = new Date();
   batch.deleted_by = userId;
   batch.status = "rejected";
-  batch.quantity_current = 0;
   await batch.save();
 
   return {
     batch,
-    inventoryLog,
+    inventoryLogs,
   };
 };
 
@@ -194,7 +205,7 @@ exports.getBatchInventoryLogs = async (batchId) => {
   const logs = await InventoryLog.find({ product_batch_id: batchId })
     .populate("created_by", "full_name email")
     .sort({ created_at: -1 })
-    .lean();
+    .lean({ virtuals: true });
 
   return logs;
 };

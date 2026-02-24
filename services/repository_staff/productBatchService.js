@@ -101,7 +101,13 @@ exports.getAllBatches = async (filters) => {
   let batches = await ProductBatch.find(query)
     .populate("items.product_id", "name image_url category_id")
     .populate("items.unit_id", "name abbreviation")
-    .lean();
+    .lean({ virtuals: true });
+
+  // Ensure batch_code is set
+  batches = batches.map((batch) => ({
+    ...batch,
+    batch_code: batch._id,
+  }));
 
   // Update status based on expiry date
   batches = batches.map(updateBatchStatus);
@@ -192,11 +198,14 @@ exports.getBatchById = async (id) => {
   let batch = await ProductBatch.findById(id)
     .populate("items.product_id", "name image_url category_id")
     .populate("items.unit_id", "name abbreviation")
-    .lean();
+    .lean({ virtuals: true });
 
   if (!batch) {
     return null;
   }
+
+  // Ensure batch_code is set
+  batch.batch_code = batch._id;
 
   // Fetch exchange_value for each item's unit
   for (let item of batch.items) {
@@ -298,15 +307,9 @@ exports.importBatch = async (batchData, userId) => {
   // Generate batch code
   const batch_code = generateBatchCode();
 
-  // Check if batch code exists (in case of same minute)
-  const existingBatch = await ProductBatch.findOne({ batch_code });
-  if (existingBatch) {
-    throw new Error("Mã lô hàng đã tồn tại, vui lòng thử lại sau 1 phút");
-  }
-
   // Create batch
   let batch = new ProductBatch({
-    batch_code,
+    _id: batch_code,
     items: items.map((item) => ({
       product_id: item.product_id,
       unit_id: item.unit_id,
@@ -323,10 +326,14 @@ exports.importBatch = async (batchData, userId) => {
   await batch.save();
 
   // Create inventory logs and update product stock for each item
-  for (const item of items) {
-    // Create inventory log
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const savedItem = batch.items[i]; // Get the saved item with _id
+
+    // Create inventory log with batch_item_id
     await InventoryLog.create({
-      product_batch_id: batch._id,
+      product_batch_id: batch.batch_code,
+      batch_item_id: savedItem._id,
       product_id: item.product_id,
       unit_id: item.unit_id,
       quantity_change: item.quantity,
@@ -419,7 +426,8 @@ exports.updateBatch = async (id, batchData, userId) => {
       if (quantityDiff !== 0) {
         // Create inventory log for quantity change
         await InventoryLog.create({
-          product_batch_id: batch._id,
+          product_batch_id: batch.batch_code,
+          batch_item_id: oldItem._id,
           product_id: newItem.product_id,
           unit_id: newItem.unit_id,
           quantity_change: quantityDiff,
