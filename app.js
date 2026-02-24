@@ -7,11 +7,14 @@ var logger = require("morgan");
 var cors = require("cors");
 const passport = require("./config/passport");
 const authRouter = require("./routes/authRouter");
-const userRouter = require("./routes/userRouter");
 const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
 const categoryRouter = require("./routes/admin/categoryRouter");
-const productBatchRouter = require("./routes/admin/productBatchRouter");
+const userRouter = require("./routes/admin/userRouter");
+
+// Repository staff routes
+const productBatchRouter = require("./routes/repository_staff/productBatchRouter");
+const product_BatchRouter = require("./routes/admin/productBatchRouter");
 const couponRouter = require("./routes/admin/couponRouter");
 
 // Customer routes (public/no admin required)
@@ -29,7 +32,7 @@ app.use(
       "http://localhost:8081",
       "http://172.24.32.1:8081", // Mobile device
       "http://192.168.1.7:8081",
-      "http://10.10.10.101:8081", // Expo IP
+      "http://10.66.162.41:8081",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -46,13 +49,13 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
-  
+
 // Initialize Passport
 app.use(passport.initialize());
 
 // Auth routes
 app.use("/api/v1/auth", authRouter);
-app.use("/api/v1/users", userRouter);
+
 // Customer routes (public - for mobile app)
 app.use("/api/v1/customer/products", customerProductRouter);
 app.use("/api/v1/customer/categories", customerCategoryRouter);
@@ -61,7 +64,11 @@ app.use("/api/v1/customer/categories", customerCategoryRouter);
 app.use("/api/v1/product-units", productUnitRouter);
 app.use("/api/v1/products", productRouter);
 app.use("/api/v1/categories", categoryRouter);
-app.use("/api/v1/product-batches", productBatchRouter);
+app.use("/api/v1/users", userRouter);
+
+// Repository staff routes (require repository_staff role)
+app.use("/api/v1/batches", productBatchRouter);
+app.use("/api/v1/product-batches", product_BatchRouter);
 app.use("/api/v1/coupons", couponRouter);
 
 // catch 404 and forward to error handler
