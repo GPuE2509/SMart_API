@@ -2,25 +2,25 @@ const mongoose = require("mongoose");
 
 const inventoryLogSchema = new mongoose.Schema(
   {
-    _id: {
-      type: mongoose.Schema.Types.ObjectId,
-      auto: true,
-    },
     product_batch_id: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
       ref: "ProductBatch",
       required: true,
     },
-    // product_id: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: "Product",
-    //   required: true,
-    // },
-    // unit_id: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: "ProductUnit",
-    //   required: true,
-    // },
+    batch_item_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: false,
+    },
+    product_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: false,
+    },
+    unit_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Unit",
+      required: false,
+    },
     quantity_change: {
       type: Number,
       required: true,

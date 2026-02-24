@@ -32,20 +32,14 @@ const batchItemSchema = new mongoose.Schema(
       maxlength: 255,
     },
   },
-  { _id: false },
+  { _id: true },
 );
 
 const productBatchSchema = new mongoose.Schema(
   {
     _id: {
-      type: mongoose.Schema.Types.ObjectId,
-      auto: true,
-    },
-    batch_code: {
       type: String,
       required: true,
-      unique: true,
-      maxlength: 50,
     },
     items: {
       type: [batchItemSchema],
@@ -57,15 +51,18 @@ const productBatchSchema = new mongoose.Schema(
         message: "Lô hàng phải có ít nhất 1 sản phẩm",
       },
     },
-    date_status: {
-      type: String,
-      enum: ["active", "expired", "near_expiry"],
-      default: "active",
-    },
-  },
     status: {
       type: String,
-      enum: ["instock", "outdate", "onsale", "sold", "rejected"],
+      enum: [
+        "active",
+        "expired",
+        "near_expiry",
+        "instock",
+        "outdate",
+        "onsale",
+        "sold",
+        "rejected",
+      ],
       default: "instock",
     },
     is_deleted: {
@@ -86,5 +83,14 @@ const productBatchSchema = new mongoose.Schema(
     timestamps: { createdAt: "created_at", updatedAt: true },
   },
 );
+
+// Virtual getter for batch_code (returns _id)
+productBatchSchema.virtual("batch_code").get(function () {
+  return this._id;
+});
+
+// Ensure virtuals are included in JSON
+productBatchSchema.set("toJSON", { virtuals: true });
+productBatchSchema.set("toObject", { virtuals: true });
 
 module.exports = mongoose.model("ProductBatch", productBatchSchema);
