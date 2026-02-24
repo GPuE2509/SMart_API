@@ -246,9 +246,9 @@ exports.updateCoupon = async (couponId, updateData) => {
 };
 
 /**
- * Delete coupon
+ * Delete coupon (soft delete - change status to disabled)
  * @param {String} couponId - Coupon ID
- * @returns {Boolean} - Success status
+ * @returns {Object} - Disabled coupon
  */
 exports.deleteCoupon = async (couponId) => {
   const coupon = await Coupon.findById(couponId);
@@ -257,7 +257,9 @@ exports.deleteCoupon = async (couponId) => {
     throw new Error("Không tìm thấy coupon");
   }
 
-  await Coupon.findByIdAndDelete(couponId);
+  // Soft delete - change status to disabled
+  coupon.status = "disabled";
+  await coupon.save();
 
-  return true;
+  return coupon;
 };

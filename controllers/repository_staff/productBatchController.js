@@ -128,3 +128,85 @@ exports.update = async (req, res) => {
     });
   }
 };
+
+/**
+ * Reject (soft delete) product batch
+ * DELETE /api/v1/batches/:id/reject
+ * Body: { reason: "optional rejection reason" }
+ */
+exports.reject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const userId = req.user._id;
+
+    const batch = await productBatchService.rejectBatch(id, reason, userId);
+
+    res.status(200).json({
+      success: true,
+      message: "Từ chối lô hàng thành công",
+      data: batch,
+    });
+  } catch (error) {
+    if (
+      error.message === "Không tìm thấy lô hàng" ||
+      error.message === "Lô hàng này đã bị từ chối trước đó"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Không thể từ chối lô hàng",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Change product batch status
+ * PATCH /api/v1/batches/:id/status
+ * Body: { status: "instock" | "outdate" | "onsale" | "sold" }
+ */
+exports.changeStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const userId = req.user._id;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp trạng thái mới",
+      });
+    }
+
+    const batch = await productBatchService.changeStatus(id, status, userId);
+
+    res.status(200).json({
+      success: true,
+      message: "Thay đổi trạng thái lô hàng thành công",
+      data: batch,
+    });
+  } catch (error) {
+    if (
+      error.message === "Không tìm thấy lô hàng" ||
+      error.message.includes("Trạng thái không hợp lệ") ||
+      error.message.includes("Không thể thay đổi")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Không thể thay đổi trạng thái lô hàng",
+      error: error.message,
+    });
+  }
+};
