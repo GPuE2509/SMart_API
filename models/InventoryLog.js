@@ -34,6 +34,7 @@ const inventoryLogSchema = new mongoose.Schema(
         "damaged",
         "expired_disposal",
         "adjustment",
+        "batch_rejection",
       ],
       required: true,
     },

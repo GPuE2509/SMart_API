@@ -38,4 +38,20 @@ router.put(
   productBatchController.update,
 );
 
+// Reject (soft delete) batch
+router.delete(
+  "/:id/reject",
+  authenticateUser,
+  authorizeRoles("repository_staff"),
+  productBatchController.reject,
+);
+
+// Change batch status
+router.patch(
+  "/:id/status",
+  authenticateUser,
+  authorizeRoles("repository_staff"),
+  productBatchController.changeStatus,
+);
+
 module.exports = router;
