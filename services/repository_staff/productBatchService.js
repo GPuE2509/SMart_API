@@ -113,9 +113,6 @@ exports.getAllBatches = async (filters) => {
       const batchCodeNormalized = removeVietnameseDiacritics(
         b.batch_code || "",
       );
-      const supplierNormalized = removeVietnameseDiacritics(
-        b.supplier_name || "",
-      );
 
       // Search in items product names
       const hasMatchingProduct = b.items?.some((item) => {
@@ -125,10 +122,18 @@ exports.getAllBatches = async (filters) => {
         return productNameNormalized.includes(searchNormalized);
       });
 
+      // Search in items supplier names
+      const hasMatchingSupplier = b.items?.some((item) => {
+        const supplierNormalized = removeVietnameseDiacritics(
+          item.supplier_name || "",
+        );
+        return supplierNormalized.includes(searchNormalized);
+      });
+
       return (
         batchCodeNormalized.includes(searchNormalized) ||
-        supplierNormalized.includes(searchNormalized) ||
-        hasMatchingProduct
+        hasMatchingProduct ||
+        hasMatchingSupplier
       );
     });
   }
