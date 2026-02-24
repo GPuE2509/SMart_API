@@ -1,44 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const productController = require("../../controllers/admin/productController");
-const {
-  authenticateUser,
-  authorizeRoles,
-} = require("../../middleware/authMiddleware");
+const { authenticateUser, authorizeRoles } = require('../../middleware/authMiddleware');
 
-router.get(
-  "/",
-  authenticateUser,
-  authorizeRoles("admin", "repository_staff"),
-  productController.getAll,
-);
+router.get("/", authenticateUser, authorizeRoles('admin'), productController.getAll);
 
-router.get(
-  "/:id",
-  authenticateUser,
-  authorizeRoles("admin", "repository_staff"),
-  productController.getById,
-);
 
-router.post(
-  "/create",
-  authenticateUser,
-  authorizeRoles("admin"),
-  productController.create,
-);
+router.get("/:id", authenticateUser, authorizeRoles('admin'), productController.getById);
 
-router.put(
-  "/:id",
-  authenticateUser,
-  authorizeRoles("admin"),
-  productController.update,
-);
+router.post("/create", authenticateUser, authorizeRoles('admin'), productController.create);
 
-router.delete(
-  "/:id",
-  authenticateUser,
-  authorizeRoles("admin"),
-  productController.delete,
-);
+
+router.put("/:id", authenticateUser, authorizeRoles('admin'), productController.update);
+
+router.delete("/:id", authenticateUser, authorizeRoles('admin'), productController.delete);
 
 module.exports = router;
