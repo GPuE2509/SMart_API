@@ -32,9 +32,17 @@ const generateBatchCode = () => {
 
 /**
  * Helper function to update batch status based on items' expiry dates
+ * Only auto-updates if current status is 'active', 'near_expiry', or 'expired'
+ * Preserves manual statuses: instock, outdate, onsale, sold, rejected
  */
 const updateBatchStatus = (batch) => {
   if (!batch.items || batch.items.length === 0) return batch;
+
+  // Manual statuses that should NOT be overwritten by expiry date calculation
+  const manualStatuses = ["instock", "outdate", "onsale", "sold", "rejected"];
+  if (manualStatuses.includes(batch.status)) {
+    return batch; // Keep the manual status unchanged
+  }
 
   const now = new Date();
   let hasExpired = false;
@@ -70,7 +78,7 @@ const updateBatchStatus = (batch) => {
 
 /**
  * Get all product batches with filters, search, and pagination
- * @param {Object} filters - { search, product_id, status, sort_by, sort_order, page, limit }
+ * @param {Object} filters - { search, product_id, status, expiry_date_from, expiry_date_to, include_deleted, sort_by, sort_order, page, limit }
  * @returns {Object} - { batches, pagination }
  */
 exports.getAllBatches = async (filters) => {
@@ -78,6 +86,9 @@ exports.getAllBatches = async (filters) => {
     search,
     product_id,
     status,
+    expiry_date_from,
+    expiry_date_to,
+    include_deleted = false,
     sort_by = "created_at",
     sort_order = "desc",
     page = 1,
@@ -87,14 +98,36 @@ exports.getAllBatches = async (filters) => {
   // Build query
   let query = {};
 
+  // Filter out soft-deleted batches by default
+  // But if filtering by 'rejected' status, include deleted batches
+  if (status === "rejected") {
+    // Show rejected batches (which have is_deleted = true)
+    query.is_deleted = true;
+    query.status = "rejected";
+  } else if (include_deleted !== "true" && include_deleted !== true) {
+    query.is_deleted = { $ne: true };
+  }
+
   // Filter by product (check if any item contains this product)
   if (product_id) {
     query["items.product_id"] = product_id;
   }
 
-  // Filter by status
-  if (status && status !== "all") {
+  // Filter by status (only if not already set for rejected)
+  if (status && status !== "all" && status !== "rejected") {
     query.status = status;
+  }
+
+  // Filter by expiry_date range
+  if (expiry_date_from || expiry_date_to) {
+    const dateFilter = {};
+    if (expiry_date_from) {
+      dateFilter.$gte = new Date(expiry_date_from);
+    }
+    if (expiry_date_to) {
+      dateFilter.$lte = new Date(expiry_date_to);
+    }
+    query["items.expiry_date"] = dateFilter;
   }
 
   // Get all batches matching base filters
@@ -466,6 +499,113 @@ exports.updateBatch = async (id, batchData, userId) => {
   // Update status based on items' expiry dates
   batch = updateBatchStatus(batch);
   await batch.save();
+
+  return batch;
+};
+
+/**
+ * Soft delete (reject) a product batch
+ * @param {String} batchId - Batch ID
+ * @param {String} reason - Rejection reason
+ * @param {ObjectId} userId - User performing the rejection
+ * @returns {Object} - Rejected batch
+ */
+exports.rejectBatch = async (batchId, reason, userId) => {
+  const batch = await ProductBatch.findById(batchId);
+
+  if (!batch) {
+    throw new Error("Không tìm thấy lô hàng");
+  }
+
+  if (batch.is_deleted) {
+    throw new Error("Lô hàng này đã bị từ chối trước đó");
+  }
+
+  // Create inventory logs for each item in the batch
+  for (const item of batch.items) {
+    await InventoryLog.create({
+      product_batch_id: batch._id,
+      batch_item_id: item._id,
+      product_id: item.product_id,
+      unit_id: item.unit_id,
+      quantity_change: -item.quantity,
+      reason_type: "batch_rejection",
+      note: reason || `Từ chối lô hàng ${batch._id}`,
+      created_by: userId,
+    });
+
+    // Update product total stock
+    const product = await Product.findById(item.product_id);
+    const productUnit = await ProductUnit.findOne({
+      product_id: item.product_id,
+      unit_id: item.unit_id,
+    });
+
+    if (product && productUnit) {
+      const quantityInBaseUnit = item.quantity * productUnit.exchange_value;
+      product.total_stock = Math.max(
+        0,
+        (product.total_stock || 0) - quantityInBaseUnit,
+      );
+      await product.save();
+    }
+  }
+
+  // Soft delete the batch
+  batch.is_deleted = true;
+  batch.deleted_at = new Date();
+  batch.deleted_by = userId;
+  batch.status = "rejected";
+  await batch.save();
+
+  return batch;
+};
+
+/**
+ * Change product batch status
+ * @param {String} batchId - Batch ID
+ * @param {String} newStatus - New status
+ * @param {ObjectId} userId - User performing the change
+ * @returns {Object} - Updated batch
+ */
+exports.changeStatus = async (batchId, newStatus, userId) => {
+  const validStatuses = [
+    "instock",
+    "outdate",
+    "onsale",
+    "sold",
+    "near_expiry",
+    "expired",
+  ];
+
+  if (!validStatuses.includes(newStatus)) {
+    throw new Error(
+      `Trạng thái không hợp lệ. Chỉ chấp nhận: ${validStatuses.join(", ")}`,
+    );
+  }
+
+  const batch = await ProductBatch.findById(batchId);
+
+  if (!batch) {
+    throw new Error("Không tìm thấy lô hàng");
+  }
+
+  if (batch.is_deleted) {
+    throw new Error("Không thể thay đổi trạng thái lô hàng đã bị từ chối");
+  }
+
+  const oldStatus = batch.status;
+  batch.status = newStatus;
+  await batch.save();
+
+  // Create inventory log for status change
+  await InventoryLog.create({
+    product_batch_id: batch._id,
+    quantity_change: 0,
+    reason_type: "adjustment",
+    note: `Thay đổi trạng thái lô hàng: ${oldStatus} → ${newStatus}`,
+    created_by: userId,
+  });
 
   return batch;
 };

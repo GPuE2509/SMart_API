@@ -126,7 +126,7 @@ exports.update = async (req, res) => {
         message: error.message,
       });
     }
-
+// Handle case where no fields are provided for update
     res.status(500).json({
       success: false,
       message: "Không thể cập nhật coupon",
