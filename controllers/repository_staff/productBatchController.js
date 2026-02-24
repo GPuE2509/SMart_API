@@ -1,4 +1,4 @@
-const productBatchService = require("../../services/admin/productBatchService");
+const productBatchService = require("../../services/repository_staff/productBatchService");
 
 /**
  * Get all batches with filters, search, and pagination

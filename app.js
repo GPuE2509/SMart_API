@@ -11,7 +11,9 @@ const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
 const categoryRouter = require("./routes/admin/categoryRouter");
 const userRouter = require("./routes/admin/userRouter");
-const productBatchRouter = require("./routes/admin/productBatchRouter");
+
+// Repository staff routes
+const productBatchRouter = require("./routes/repository_staff/productBatchRouter");
 
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");

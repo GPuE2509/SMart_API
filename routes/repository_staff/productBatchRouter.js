@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const productBatchController = require("../../controllers/admin/productBatchController");
+const productBatchController = require("../../controllers/repository_staff/productBatchController");
 const {
   authenticateUser,
   authorizeRoles,
