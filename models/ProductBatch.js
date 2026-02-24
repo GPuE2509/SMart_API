@@ -1,48 +1,96 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const productBatchSchema = new mongoose.Schema({
-  _id: {
-    type: mongoose.Schema.Types.ObjectId,
-    auto: true
+const batchItemSchema = new mongoose.Schema(
+  {
+    product_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: true,
+    },
+    unit_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Unit",
+      required: true,
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      default: 0,
+    },
+    import_price: {
+      type: Number,
+      default: 0,
+    },
+    manufacture_date: {
+      type: Date,
+    },
+    expiry_date: {
+      type: Date,
+    },
+    supplier_name: {
+      type: String,
+      maxlength: 255,
+    },
   },
-  product_id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product',
-    required: true
+  { _id: true },
+);
+
+const productBatchSchema = new mongoose.Schema(
+  {
+    _id: {
+      type: String,
+      required: true,
+    },
+    items: {
+      type: [batchItemSchema],
+      required: true,
+      validate: {
+        validator: function (items) {
+          return items && items.length > 0;
+        },
+        message: "Lô hàng phải có ít nhất 1 sản phẩm",
+      },
+    },
+    status: {
+      type: String,
+      enum: [
+        "active",
+        "expired",
+        "near_expiry",
+        "instock",
+        "outdate",
+        "onsale",
+        "sold",
+        "rejected",
+      ],
+      default: "instock",
+    },
+    is_deleted: {
+      type: Boolean,
+      default: false,
+    },
+    deleted_at: {
+      type: Date,
+      default: null,
+    },
+    deleted_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
-  batch_code: {
-    type: String,
-    maxlength: 50
+  {
+    timestamps: { createdAt: "created_at", updatedAt: true },
   },
-  import_price: {
-    type: Number,
-    default: 0
-  },
-  quantity_initial: {
-    type: Number,
-    default: 0
-  },
-  quantity_current: {
-    type: Number,
-    default: 0
-  },
-  manufacture_date: {
-    type: Date
-  },
-  expiry_date: {
-    type: Date
-  },
-  supplier_name: {
-    type: String,
-    maxlength: 255
-  },
-  status: {
-    type: String,
-    enum: ['active', 'expired', 'near_expiry'],
-    default: 'active'
-  }
-}, {
-  timestamps: { createdAt: 'created_at', updatedAt: true }
+);
+
+// Virtual getter for batch_code (returns _id)
+productBatchSchema.virtual("batch_code").get(function () {
+  return this._id;
 });
 
-module.exports = mongoose.model('ProductBatch', productBatchSchema);
+// Ensure virtuals are included in JSON
+productBatchSchema.set("toJSON", { virtuals: true });
+productBatchSchema.set("toObject", { virtuals: true });
+
+module.exports = mongoose.model("ProductBatch", productBatchSchema);

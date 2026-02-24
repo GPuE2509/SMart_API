@@ -1,50 +1,49 @@
 const express = require("express");
 const router = express.Router();
-const categoryController = require("../../controllers/admin/categoryController");
+const couponController = require("../../controllers/admin/couponController");
 const {
   authenticateUser,
   authorizeRoles,
 } = require("../../middleware/authMiddleware");
 
-router.get(
-  "/tree",
-  authenticateUser,
-  authorizeRoles("admin", "repository_staff"),
-  categoryController.getTree,
-);
-
+// Get all coupons
 router.get(
   "/",
   authenticateUser,
-  authorizeRoles("admin", "repository_staff"),
-  categoryController.getAll,
+  authorizeRoles("admin"),
+  couponController.getAll,
 );
 
+// Get coupon by ID
 router.get(
   "/:id",
   authenticateUser,
-  authorizeRoles("admin", "repository_staff"),
-  categoryController.getById,
+  authorizeRoles("admin"),
+  couponController.getById,
 );
 
+// Create new coupon
 router.post(
-  "/create",
+  "/",
   authenticateUser,
   authorizeRoles("admin"),
-  categoryController.create,
+  couponController.create,
 );
 
+// Update coupon
 router.put(
   "/:id",
   authenticateUser,
   authorizeRoles("admin"),
-  categoryController.update,
+  couponController.update,
 );
 
+// Delete coupon
 router.delete(
   "/:id",
   authenticateUser,
   authorizeRoles("admin"),
-  categoryController.delete,
+  couponController.delete,
 );
+
 module.exports = router;
