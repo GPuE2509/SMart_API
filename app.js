@@ -14,6 +14,8 @@ const userRouter = require("./routes/admin/userRouter");
 
 // Repository staff routes
 const productBatchRouter = require("./routes/repository_staff/productBatchRouter");
+const product_BatchRouter = require("./routes/admin/productBatchRouter");
+const couponRouter = require("./routes/admin/couponRouter");
 
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");
@@ -66,6 +68,8 @@ app.use("/api/v1/users", userRouter);
 
 // Repository staff routes (require repository_staff role)
 app.use("/api/v1/batches", productBatchRouter);
+app.use("/api/v1/product-batches", product_BatchRouter);
+app.use("/api/v1/coupons", couponRouter);
 
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {

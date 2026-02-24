@@ -57,10 +57,29 @@ const productBatchSchema = new mongoose.Schema(
         message: "Lô hàng phải có ít nhất 1 sản phẩm",
       },
     },
-    status: {
+    date_status: {
       type: String,
       enum: ["active", "expired", "near_expiry"],
       default: "active",
+    },
+  },
+    status: {
+      type: String,
+      enum: ["instock", "outdate", "onsale", "sold", "rejected"],
+      default: "instock",
+    },
+    is_deleted: {
+      type: Boolean,
+      default: false,
+    },
+    deleted_at: {
+      type: Date,
+      default: null,
+    },
+    deleted_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
   },
   {
