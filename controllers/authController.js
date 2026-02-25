@@ -632,3 +632,104 @@ exports.logout = async (req, res) => {
     }
 };
 
+/**
+ * Verify account invitation token
+ * GET /api/v1/auth/verify-invitation?token=xxx
+ */
+exports.verifyAccountInvitation = async (req, res) => {
+    try {
+        const { token } = req.query;
+
+        if (!token) {
+            return res.status(400).json({
+                success: false,
+                message: 'Token xác thực là bắt buộc'
+            });
+        }
+
+        const userInfo = await authService.verifyAccountInvitationToken(token);
+
+        res.status(200).json({
+            success: true,
+            message: 'Token hợp lệ',
+            data: userInfo
+        });
+    } catch (error) {
+        if (error.message.includes('Token xác thực không hợp lệ') || 
+            error.message.includes('đã hết hạn')) {
+            return res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Không thể xác thực token',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Set password for new account after email verification
+ * POST /api/v1/auth/set-password
+ * Body: { token, password, confirmPassword }
+ */
+exports.setPasswordForNewAccount = async (req, res) => {
+    try {
+        const { token, password, confirmPassword } = req.body;
+
+        if (!token || !password || !confirmPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Token, mật khẩu và xác nhận mật khẩu là bắt buộc'
+            });
+        }
+
+        if (password !== confirmPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Mật khẩu và xác nhận mật khẩu không khớp'
+            });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'Mật khẩu phải có ít nhất 6 ký tự'
+            });
+        }
+
+        const result = await authService.setPasswordForNewAccount(token, password);
+
+        // Set HTTP-only cookie with auth token
+        res.cookie('token', result.token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 6 * 60 * 60 * 1000 // 6 hours
+        });
+
+        res.status(200).json({
+            success: true,
+            message: result.message,
+            data: result.user
+        });
+    } catch (error) {
+        if (error.message.includes('Token xác thực') || 
+            error.message.includes('đã hết hạn') ||
+            error.message.includes('Mật khẩu')) {
+            return res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Không thể đặt mật khẩu',
+            error: error.message
+        });
+    }
+};

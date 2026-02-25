@@ -28,6 +28,14 @@ router.get(
   userController.getById,
 );
 
+// Create new staff/admin account
+router.post(
+  "/create-staff",
+  authenticateUser,
+  authorizeRoles("admin"),
+  userController.createStaffAccount,
+);
+
 // Update user information
 router.put(
   "/:id",
