@@ -57,7 +57,7 @@ exports.getById = async (req, res) => {
  * Import new product batch
  * POST /api/v1/batches/import
  * Body: items[]
- * items: [{ product_id, unit_id, quantity, import_price, manufacture_date, expiry_date, supplier_name }]
+ * items: [{ product_id, unit_id, initial_quantity, current_quantity, import_price, manufacture_date, expiry_date, supplier_name }]
  */
 exports.importBatch = async (req, res) => {
   try {
@@ -100,7 +100,7 @@ exports.importBatch = async (req, res) => {
 /**
  * Update product batch
  * PUT /api/v1/batches/:id
- * Body: { items: [{ product_id, unit_id, quantity, import_price, manufacture_date, expiry_date, supplier_name }] }
+ * Body: { items: [{ product_id, unit_id, initial_quantity, current_quantity, import_price, manufacture_date, expiry_date, supplier_name }] }
  */
 exports.update = async (req, res) => {
   try {
