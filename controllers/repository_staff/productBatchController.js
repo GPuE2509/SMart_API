@@ -167,9 +167,10 @@ exports.reject = async (req, res) => {
 };
 
 /**
- * Change product batch status
+ * Change product batch items status
  * PATCH /api/v1/batches/:id/status
  * Body: { status: "instock" | "outdate" | "onsale" | "sold" }
+ * Note: This updates the status for ALL items in the batch
  */
 exports.changeStatus = async (req, res) => {
   try {
