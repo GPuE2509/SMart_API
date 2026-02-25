@@ -11,6 +11,7 @@ const productUnitRouter = require("./routes/admin/productUnitRouter");
 const productRouter = require("./routes/admin/productRouter");
 const categoryRouter = require("./routes/admin/categoryRouter");
 const userRouter = require("./routes/admin/userRouter");
+const attendanceRouter = require("./routes/admin/attendanceRouter");
 
 // Repository staff routes
 const productBatchRouter = require("./routes/repository_staff/productBatchRouter");
@@ -64,6 +65,7 @@ app.use("/api/v1/product-units", productUnitRouter);
 app.use("/api/v1/products", productRouter);
 app.use("/api/v1/categories", categoryRouter);
 app.use("/api/v1/users", userRouter);
+app.use("/api/v1/attendance", attendanceRouter);
 
 // Repository staff routes (require repository_staff role)
 app.use("/api/v1/batches", productBatchRouter);
