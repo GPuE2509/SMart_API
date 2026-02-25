@@ -284,3 +284,87 @@ exports.sendLoginVerification = async (email, fullName, role, loginToken) => {
         throw new Error('Không thể gửi email xác thực đăng nhập. Vui lòng thử lại sau.');
     }
 };
+
+// Send Account Invitation Email for Staff/Admin created by Admin
+exports.sendAccountInvitationEmail = async (email, fullName, role, verificationToken) => {
+    try {
+        const setPasswordUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/set-password?token=${verificationToken}`;
+
+        const roleText = role === 'admin' ? 'Quản trị viên' : 
+                        role === 'seller_staff' ? 'Nhân viên bán hàng' : 
+                        role === 'repository_staff' ? 'Nhân viên kho' : 'Nhân viên';
+
+        const mailOptions = {
+            from: `"SMart System" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: `Mời tham gia hệ thống SMart với vai trò ${roleText}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
+                    <div style="background-color: #4CAF50; padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0;">🎉 SMart</h1>
+                    </div>
+                    <div style="background-color: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                        <h2 style="color: #333; margin-top: 0;">Xin chào ${fullName}!</h2>
+                        
+                        <div style="background-color: #E8F5E9; padding: 20px; border-left: 4px solid #4CAF50; margin: 20px 0;">
+                            <p style="color: #2E7D32; font-size: 16px; margin: 0; font-weight: bold;">
+                                🎊 Chúc mừng! Bạn đã được mời tham gia hệ thống SMart
+                            </p>
+                        </div>
+
+                        <p style="color: #666; font-size: 16px; line-height: 1.5;">
+                            Quản trị viên đã tạo tài khoản <strong>${roleText}</strong> cho bạn trong hệ thống SMart.
+                        </p>
+
+                        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                            <p style="margin: 5px 0; color: #666;"><strong>Email:</strong> ${email}</p>
+                            <p style="margin: 5px 0; color: #666;"><strong>Vai trò:</strong> ${roleText}</p>
+                            <p style="margin: 5px 0; color: #666;"><strong>Trạng thái:</strong> Chờ xác thực</p>
+                        </div>
+
+                        <p style="color: #666; font-size: 16px; line-height: 1.5; margin-top: 25px;">
+                            <strong>Để kích hoạt tài khoản, vui lòng:</strong>
+                        </p>
+
+                        <ol style="color: #666; font-size: 15px; line-height: 1.8;">
+                            <li>Nhấn vào nút bên dưới để xác thực email</li>
+                            <li>Đặt mật khẩu cho tài khoản của bạn</li>
+                            <li>Bắt đầu sử dụng hệ thống SMart</li>
+                        </ol>
+
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${setPasswordUrl}" style="background-color: #4CAF50; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold; font-size: 16px;">
+                                🔑 Xác thực và đặt mật khẩu
+                            </a>
+                        </div>
+
+                        <div style="background-color: #fff3e0; padding: 15px; border-left: 4px solid #FF9800; margin: 20px 0;">
+                            <p style="color: #E65100; font-size: 14px; margin: 0;">
+                                ⚠️ <strong>Lưu ý quan trọng:</strong>
+                            </p>
+                            <ul style="color: #E65100; font-size: 13px; margin: 10px 0; padding-left: 20px;">
+                                <li>Link xác thực có hiệu lực trong <strong>24 giờ</strong></li>
+                                <li>Vui lòng không chia sẻ link này với người khác</li>
+                                <li>Nếu link hết hạn, vui lòng liên hệ quản trị viên</li>
+                            </ul>
+                        </div>
+
+                        <p style="color: #999; font-size: 13px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+                            Nếu bạn không yêu cầu tạo tài khoản này, vui lòng bỏ qua email này hoặc liên hệ với quản trị viên.
+                        </p>
+                    </div>
+                    <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
+                        <p>© 2026 SMart. All rights reserved.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+        console.log('Account invitation email sent successfully:', info.messageId);
+        return { success: true, messageId: info.messageId };
+    } catch (error) {
+        console.error('Error sending account invitation email:', error);
+        throw new Error('Không thể gửi email mời tham gia. Vui lòng thử lại sau.');
+    }
+};
