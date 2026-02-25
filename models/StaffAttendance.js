@@ -22,6 +22,21 @@ const staffAttendanceSchema = new mongoose.Schema({
   },
   note: {
     type: String
+  },
+  check_in_face_match: {
+    type: Number, // Match confidence score
+    min: 0,
+    max: 1
+  },
+  check_out_face_match: {
+    type: Number, // Match confidence score
+    min: 0,
+    max: 1
+  },
+  status: {
+    type: String,
+    enum: ['checked_in', 'checked_out', 'absent'],
+    default: 'absent'
   }
 }, {
   timestamps: true
