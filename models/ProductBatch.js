@@ -12,7 +12,12 @@ const batchItemSchema = new mongoose.Schema(
       ref: "Unit",
       required: true,
     },
-    quantity: {
+    initial_quantity: {
+      type: Number,
+      required: true,
+      default: 0,
+    },
+    current_quantity: {
       type: Number,
       required: true,
       default: 0,
