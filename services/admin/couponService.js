@@ -10,6 +10,7 @@ exports.getAllCoupons = async (filters) => {
     code,
     status,
     discount_type,
+    is_expired,
     sort_by = "createdAt",
     sort_order = "desc",
     page = 1,
@@ -32,6 +33,22 @@ exports.getAllCoupons = async (filters) => {
   // Filter by discount_type
   if (discount_type) {
     query.discount_type = discount_type;
+  }
+
+  // Filter by expiration status
+  if (is_expired !== undefined && is_expired !== null && is_expired !== "") {
+    const now = new Date();
+    if (is_expired === "true" || is_expired === true) {
+      // Show only expired coupons (end_date exists and < now)
+      query.end_date = { $exists: true, $ne: null, $lt: now };
+    } else if (is_expired === "false" || is_expired === false) {
+      // Show only non-expired coupons (end_date >= now OR end_date is null/not exists)
+      query.$or = [
+        { end_date: { $gte: now } },
+        { end_date: null },
+        { end_date: { $exists: false } },
+      ];
+    }
   }
 
   // Build sort
@@ -64,8 +81,19 @@ exports.getAllCoupons = async (filters) => {
     Coupon.countDocuments(query),
   ]);
 
+  // Add computed status based on expiration
+  const now = new Date();
+  const couponsWithComputedStatus = coupons.map((coupon) => {
+    const isExpired = coupon.end_date && new Date(coupon.end_date) < now;
+    return {
+      ...coupon,
+      is_expired: isExpired,
+      computed_status: isExpired ? "expired" : coupon.status,
+    };
+  });
+
   return {
-    coupons,
+    coupons: couponsWithComputedStatus,
     pagination: {
       page: pageNum,
       limit: limitNum,
