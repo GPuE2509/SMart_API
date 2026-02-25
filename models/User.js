@@ -48,6 +48,15 @@ const userSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Face recognition for check-in/checkout
+  face_descriptor: {
+    type: [Number], // Array to store face descriptor values
+    default: undefined
+  },
+  face_image_url: {
+    type: String,
+    maxlength: 500000 // Store face image for staff
+  },
   address: {
     street: {
       type: String,

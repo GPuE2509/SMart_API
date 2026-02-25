@@ -34,7 +34,43 @@ const authorizeRoles = (...roles) => {
     };
 };
 
+// Alias for consistency
+const verifyToken = authenticateUser;
+
+// Helper middleware for admin role
+const isAdmin = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: 'Yêu cầu xác thực.' });
+    }
+    
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ 
+            message: 'Truy cập bị từ chối. Chỉ admin mới có quyền.' 
+        });
+    }
+    
+    next();
+};
+
+// Helper middleware for staff roles (seller_staff and repository_staff)
+const isStaff = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: 'Yêu cầu xác thực.' });
+    }
+    
+    if (!['seller_staff', 'repository_staff'].includes(req.user.role)) {
+        return res.status(403).json({ 
+            message: 'Truy cập bị từ chối. Chỉ nhân viên mới có quyền.' 
+        });
+    }
+    
+    next();
+};
+
 module.exports = {
     authenticateUser,
-    authorizeRoles
+    authorizeRoles,
+    verifyToken,
+    isAdmin,
+    isStaff
 };
