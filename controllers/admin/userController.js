@@ -278,3 +278,56 @@ exports.updateRole = async (req, res) => {
     });
   }
 };
+
+/**
+ * Create new staff/admin account (requires email verification)
+ * POST /api/v1/users/create-staff
+ * Body: { full_name, email, phone, role }
+ */
+exports.createStaffAccount = async (req, res) => {
+  try {
+    const { full_name, email, phone, role } = req.body;
+
+    // Validate required fields
+    if (!full_name || !email || !role) {
+      return res.status(400).json({
+        success: false,
+        message: "Tên, email và vai trò là bắt buộc",
+      });
+    }
+
+    const user = await userService.createStaffAccount({
+      full_name,
+      email,
+      phone,
+      role,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Đã tạo tài khoản thành công. Email xác thực đã được gửi đến ${email}`,
+      data: user,
+    });
+  } catch (error) {
+    // Handle validation errors
+    const validationErrors = [
+      "Email đã được sử dụng bởi tài khoản khác",
+      "Số điện thoại đã được sử dụng bởi tài khoản khác",
+      "Vai trò không hợp lệ",
+      "Tên, email và vai trò là bắt buộc",
+    ];
+
+    if (validationErrors.some((msg) => error.message.includes(msg))) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Không thể tạo tài khoản",
+      error: error.message,
+    });
+  }
+};

@@ -1,4 +1,6 @@
 const User = require("../../models/User");
+const crypto = require('crypto');
+const emailService = require('../emailService');
 
 /**
  * Helper function to remove Vietnamese diacritics
@@ -264,3 +266,72 @@ exports.updateUserRole = async (id, role) => {
 
   return updatedUser;
 };
+
+/**
+ * Create new staff/admin account by admin (requires email verification)
+ * @param {Object} userData - { full_name, email, phone, role }
+ * @returns {Object} - Created user
+ */
+exports.createStaffAccount = async (userData) => {
+  const { full_name, email, phone, role } = userData;
+
+  // Validate required fields
+  if (!full_name || !email || !role) {
+    throw new Error("Tên, email và vai trò là bắt buộc");
+  }
+
+  // Validate role (only staff and admin roles)
+  const validRoles = ["admin", "seller_staff", "repository_staff"];
+  if (!validRoles.includes(role)) {
+    throw new Error("Vai trò không hợp lệ. Chỉ có thể tạo tài khoản admin, seller_staff hoặc repository_staff");
+  }
+
+  // Check if email already exists
+  const existingUser = await User.findOne({ email });
+  if (existingUser) {
+    throw new Error("Email đã được sử dụng bởi tài khoản khác");
+  }
+
+  // Check if phone already exists (if provided)
+  if (phone) {
+    const existingPhone = await User.findOne({ phone });
+    if (existingPhone) {
+      throw new Error("Số điện thoại đã được sử dụng bởi tài khoản khác");
+    }
+  }
+
+  // Generate verification token (valid for 24 hours)
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+  // Create new user without password (will be set after email verification)
+  const newUser = new User({
+    full_name,
+    email,
+    phone,
+    role,
+    status: 'active',
+    isVerified: false,
+    loginToken: verificationToken,
+    loginTokenExpiry: verificationTokenExpiry,
+    created_at: new Date(),
+    updated_at: new Date()
+  });
+
+  await newUser.save();
+
+  // Send invitation email
+  await emailService.sendAccountInvitationEmail(email, full_name, role, verificationToken);
+
+  // Return user without sensitive fields
+  const userResponse = newUser.toObject();
+  delete userResponse.password;
+  delete userResponse.otp;
+  delete userResponse.otpExpiry;
+  delete userResponse.loginToken;
+  delete userResponse.loginTokenExpiry;
+  delete userResponse.loginSessionId;
+
+  return userResponse;
+};
+
