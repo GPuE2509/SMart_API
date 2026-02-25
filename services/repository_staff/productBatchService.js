@@ -292,8 +292,8 @@ exports.importBatch = async (batchData, userId) => {
       throw new Error(`Đơn vị sản phẩm không tồn tại cho ${product.name}`);
     }
 
-    // Validate quantity
-    if (!item.quantity || item.quantity <= 0) {
+    // Validate initial_quantity
+    if (!item.initial_quantity || item.initial_quantity <= 0) {
       throw new Error(`Số lượng của ${product.name} phải lớn hơn 0`);
     }
 
@@ -346,7 +346,8 @@ exports.importBatch = async (batchData, userId) => {
     items: items.map((item) => ({
       product_id: item.product_id,
       unit_id: item.unit_id,
-      quantity: item.quantity,
+      initial_quantity: item.initial_quantity,
+      current_quantity: item.current_quantity || item.initial_quantity,
       import_price: item.import_price || 0,
       manufacture_date: item.manufacture_date || null,
       expiry_date: item.expiry_date || null,
@@ -369,7 +370,7 @@ exports.importBatch = async (batchData, userId) => {
       batch_item_id: savedItem._id,
       product_id: item.product_id,
       unit_id: item.unit_id,
-      quantity_change: item.quantity,
+      quantity_change: item.initial_quantity,
       reason_type: "import",
       note: `Nhập lô hàng mới ${batch_code} từ ${item.supplier_name || "nhà cung cấp"}`,
       created_by: userId,
@@ -384,7 +385,8 @@ exports.importBatch = async (batchData, userId) => {
 
     if (product && productUnit) {
       // Calculate quantity in base unit
-      const quantityInBaseUnit = item.quantity * productUnit.exchange_value;
+      const quantityInBaseUnit =
+        item.initial_quantity * productUnit.exchange_value;
       product.total_stock = (product.total_stock || 0) + quantityInBaseUnit;
       await product.save();
     }
@@ -453,33 +455,40 @@ exports.updateBatch = async (id, batchData, userId) => {
         }
       }
 
-      // Check if quantity changed
-      const quantityDiff = newItem.quantity - oldItem.quantity;
+      // Check if initial_quantity or current_quantity changed
+      const initialQuantityDiff =
+        newItem.initial_quantity - oldItem.initial_quantity;
+      const currentQuantityDiff =
+        newItem.current_quantity - oldItem.current_quantity;
 
-      if (quantityDiff !== 0) {
-        // Create inventory log for quantity change
-        await InventoryLog.create({
-          product_batch_id: batch.batch_code,
-          batch_item_id: oldItem._id,
-          product_id: newItem.product_id,
-          unit_id: newItem.unit_id,
-          quantity_change: quantityDiff,
-          reason_type: "adjustment",
-          note: `Điều chỉnh số lượng lô ${batch.batch_code}: ${oldItem.quantity} → ${newItem.quantity} (${quantityDiff > 0 ? "+" : ""}${quantityDiff})`,
-          created_by: userId,
-        });
+      if (initialQuantityDiff !== 0 || currentQuantityDiff !== 0) {
+        // Create inventory log for quantity change (based on current_quantity change)
+        if (currentQuantityDiff !== 0) {
+          await InventoryLog.create({
+            product_batch_id: batch.batch_code,
+            batch_item_id: oldItem._id,
+            product_id: newItem.product_id,
+            unit_id: newItem.unit_id,
+            quantity_change: currentQuantityDiff,
+            reason_type: "adjustment",
+            note: `Điều chỉnh số lượng hiện tại lô ${batch.batch_code}: ${oldItem.current_quantity} → ${newItem.current_quantity} (${currentQuantityDiff > 0 ? "+" : ""}${currentQuantityDiff})`,
+            created_by: userId,
+          });
 
-        // Update product total stock
-        const product = await Product.findById(newItem.product_id);
-        const productUnit = await ProductUnit.findOne({
-          product_id: newItem.product_id,
-          unit_id: newItem.unit_id,
-        });
+          // Update product total stock
+          const product = await Product.findById(newItem.product_id);
+          const productUnit = await ProductUnit.findOne({
+            product_id: newItem.product_id,
+            unit_id: newItem.unit_id,
+          });
 
-        if (product && productUnit) {
-          const quantityInBaseUnit = quantityDiff * productUnit.exchange_value;
-          product.total_stock = (product.total_stock || 0) + quantityInBaseUnit;
-          await product.save();
+          if (product && productUnit) {
+            const quantityInBaseUnit =
+              currentQuantityDiff * productUnit.exchange_value;
+            product.total_stock =
+              (product.total_stock || 0) + quantityInBaseUnit;
+            await product.save();
+          }
         }
       }
 
@@ -487,7 +496,8 @@ exports.updateBatch = async (id, batchData, userId) => {
       batch.items[i] = {
         product_id: newItem.product_id,
         unit_id: newItem.unit_id,
-        quantity: newItem.quantity,
+        initial_quantity: newItem.initial_quantity,
+        current_quantity: newItem.current_quantity,
         import_price: newItem.import_price,
         manufacture_date: newItem.manufacture_date,
         expiry_date: newItem.expiry_date,
@@ -528,7 +538,7 @@ exports.rejectBatch = async (batchId, reason, userId) => {
       batch_item_id: item._id,
       product_id: item.product_id,
       unit_id: item.unit_id,
-      quantity_change: -item.quantity,
+      quantity_change: -item.current_quantity,
       reason_type: "batch_rejection",
       note: reason || `Từ chối lô hàng ${batch._id}`,
       created_by: userId,
@@ -542,7 +552,8 @@ exports.rejectBatch = async (batchId, reason, userId) => {
     });
 
     if (product && productUnit) {
-      const quantityInBaseUnit = item.quantity * productUnit.exchange_value;
+      const quantityInBaseUnit =
+        item.current_quantity * productUnit.exchange_value;
       product.total_stock = Math.max(
         0,
         (product.total_stock || 0) - quantityInBaseUnit,
