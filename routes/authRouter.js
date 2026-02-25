@@ -24,6 +24,10 @@ router.post('/logout', authenticateUser,authController.logout);
 router.post("/staff-admin-login", authController.staffAdminLogin);
 router.get("/verify-login", authController.verifyStaffAdminLogin);
 
+// Account invitation verification and password setup (for new staff/admin accounts)
+router.get("/verify-invitation", authController.verifyAccountInvitation);
+router.post("/set-password", authController.setPasswordForNewAccount);
+
 // Google OAuth routes
 router.get(
   "/google",

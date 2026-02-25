@@ -509,3 +509,102 @@ exports.verifyStaffAdminLogin = async (loginToken, action) => {
         throw error;
     }
 };
+
+/**
+ * Verify account invitation token and check if it's valid
+ * @param {String} token - Verification token from email
+ * @returns {Object} - User info if valid
+ */
+exports.verifyAccountInvitationToken = async (token) => {
+    try {
+        if (!token) {
+            throw new Error('Token xác thực là bắt buộc');
+        }
+
+        // Find user with this token
+        const user = await users.findOne({
+            loginToken: token,
+            loginTokenExpiry: { $gt: new Date() },
+            isVerified: false
+        });
+
+        if (!user) {
+            throw new Error('Token xác thực không hợp lệ hoặc đã hết hạn');
+        }
+
+        // Return user info (without sensitive data)
+        return {
+            email: user.email,
+            full_name: user.full_name,
+            role: user.role
+        };
+    } catch (error) {
+        throw error;
+    }
+};
+
+/**
+ * Set password for new staff/admin account after email verification
+ * @param {String} token - Verification token from email
+ * @param {String} password - New password
+ * @returns {Object} - Success message and auth token
+ */
+exports.setPasswordForNewAccount = async (token, password) => {
+    try {
+        if (!token) {
+            throw new Error('Token xác thực là bắt buộc');
+        }
+
+        if (!password) {
+            throw new Error('Mật khẩu là bắt buộc');
+        }
+
+        if (password.length < 6) {
+            throw new Error('Mật khẩu phải có ít nhất 6 ký tự');
+        }
+
+        // Find user with this token
+        const user = await users.findOne({
+            loginToken: token,
+            loginTokenExpiry: { $gt: new Date() },
+            isVerified: false
+        });
+
+        if (!user) {
+            throw new Error('Token xác thực không hợp lệ hoặc đã hết hạn');
+        }
+
+        // Hash password
+        const hashedPassword = await hashPassword(password);
+
+        // Update user
+        user.password = hashedPassword;
+        user.isVerified = true;
+        user.loginToken = undefined;
+        user.loginTokenExpiry = undefined;
+        user.updated_at = new Date();
+        await user.save();
+
+        // Generate auth token
+        const authToken = generateToken(user);
+
+        // Send welcome email
+        await emailService.sendWelcomeEmail(user.email, user.full_name);
+
+        const userResponse = user.toObject();
+        delete userResponse.password;
+        delete userResponse.otp;
+        delete userResponse.otpExpiry;
+        delete userResponse.loginToken;
+        delete userResponse.loginTokenExpiry;
+        delete userResponse.loginSessionId;
+
+        return {
+            message: 'Kích hoạt tài khoản thành công',
+            token: authToken,
+            user: userResponse
+        };
+    } catch (error) {
+        throw error;
+    }
+};
