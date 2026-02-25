@@ -36,6 +36,16 @@ const batchItemSchema = new mongoose.Schema(
       type: String,
       maxlength: 255,
     },
+    date_status: {
+      type: String,
+      enum: ["active", "expired", "near_expiry"],
+      default: "active",
+    },
+    status: {
+      type: String,
+      enum: ["instock", "outdate", "onsale", "sold", "rejected"],
+      default: "instock",
+    },
   },
   { _id: true },
 );
@@ -55,20 +65,6 @@ const productBatchSchema = new mongoose.Schema(
         },
         message: "Lô hàng phải có ít nhất 1 sản phẩm",
       },
-    },
-    status: {
-      type: String,
-      enum: [
-        "active",
-        "expired",
-        "near_expiry",
-        "instock",
-        "outdate",
-        "onsale",
-        "sold",
-        "rejected",
-      ],
-      default: "instock",
     },
     is_deleted: {
       type: Boolean,

@@ -31,47 +31,41 @@ const generateBatchCode = () => {
 };
 
 /**
- * Helper function to update batch status based on items' expiry dates
- * Only auto-updates if current status is 'active', 'near_expiry', or 'expired'
- * Preserves manual statuses: instock, outdate, onsale, sold, rejected
+ * Helper function to update item status based on expiry date
+ * Sets date_status (active/near_expiry/expired) for each item automatically
+ * Only auto-updates date_status, preserves manual status field
+ */
+const updateItemStatus = (item) => {
+  if (!item.expiry_date) {
+    item.date_status = "active";
+    return item;
+  }
+
+  const now = new Date();
+  const expiryDate = new Date(item.expiry_date);
+  const daysUntilExpiry = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+
+  if (daysUntilExpiry < 0) {
+    item.date_status = "expired";
+  } else if (daysUntilExpiry <= 30) {
+    item.date_status = "near_expiry";
+  } else {
+    item.date_status = "active";
+  }
+
+  return item;
+};
+
+/**
+ * Helper function to update all items' date_status in a batch
+ * @param {Object} batch - Batch object
+ * @returns {Object} - Updated batch
  */
 const updateBatchStatus = (batch) => {
   if (!batch.items || batch.items.length === 0) return batch;
 
-  // Manual statuses that should NOT be overwritten by expiry date calculation
-  const manualStatuses = ["instock", "outdate", "onsale", "sold", "rejected"];
-  if (manualStatuses.includes(batch.status)) {
-    return batch; // Keep the manual status unchanged
-  }
-
-  const now = new Date();
-  let hasExpired = false;
-  let hasNearExpiry = false;
-
-  // Check each item's expiry date
-  for (const item of batch.items) {
-    if (item.expiry_date) {
-      const expiryDate = new Date(item.expiry_date);
-      const daysUntilExpiry = Math.ceil(
-        (expiryDate - now) / (1000 * 60 * 60 * 24),
-      );
-
-      if (daysUntilExpiry < 0) {
-        hasExpired = true;
-        break; // If any item expired, batch is expired
-      } else if (daysUntilExpiry <= 30) {
-        hasNearExpiry = true;
-      }
-    }
-  }
-
-  if (hasExpired) {
-    batch.status = "expired";
-  } else if (hasNearExpiry) {
-    batch.status = "near_expiry";
-  } else {
-    batch.status = "active";
-  }
+  // Update date_status for each item based on expiry date
+  batch.items = batch.items.map(updateItemStatus);
 
   return batch;
 };
@@ -99,12 +93,7 @@ exports.getAllBatches = async (filters) => {
   let query = {};
 
   // Filter out soft-deleted batches by default
-  // But if filtering by 'rejected' status, include deleted batches
-  if (status === "rejected") {
-    // Show rejected batches (which have is_deleted = true)
-    query.is_deleted = true;
-    query.status = "rejected";
-  } else if (include_deleted !== "true" && include_deleted !== true) {
+  if (include_deleted !== "true" && include_deleted !== true) {
     query.is_deleted = { $ne: true };
   }
 
@@ -113,9 +102,17 @@ exports.getAllBatches = async (filters) => {
     query["items.product_id"] = product_id;
   }
 
-  // Filter by status (only if not already set for rejected)
-  if (status && status !== "all" && status !== "rejected") {
-    query.status = status;
+  // Filter by status (filter items by status or date_status)
+  if (status && status !== "all") {
+    // Check if status is a manual status or date_status
+    const manualStatuses = ["instock", "outdate", "onsale", "sold", "rejected"];
+    const dateStatuses = ["active", "near_expiry", "expired"];
+
+    if (manualStatuses.includes(status)) {
+      query["items.status"] = status;
+    } else if (dateStatuses.includes(status)) {
+      query["items.date_status"] = status;
+    }
   }
 
   // Filter by expiry_date range
@@ -352,10 +349,12 @@ exports.importBatch = async (batchData, userId) => {
       manufacture_date: item.manufacture_date || null,
       expiry_date: item.expiry_date || null,
       supplier_name: item.supplier_name || "",
+      date_status: "active", // Will be updated by updateBatchStatus
+      status: "instock", // Default manual status
     })),
   });
 
-  // Update status based on expiry date (check all items)
+  // Update date_status based on expiry date for all items
   batch = updateBatchStatus(batch);
   await batch.save();
 
@@ -502,11 +501,13 @@ exports.updateBatch = async (id, batchData, userId) => {
         manufacture_date: newItem.manufacture_date,
         expiry_date: newItem.expiry_date,
         supplier_name: newItem.supplier_name,
+        status: oldItem.status || "instock", // Preserve manual status
+        date_status: oldItem.date_status || "active", // Will be updated by updateBatchStatus
       };
     }
   }
 
-  // Update status based on items' expiry dates
+  // Update date_status based on items' expiry dates
   batch = updateBatchStatus(batch);
   await batch.save();
 
@@ -566,28 +567,27 @@ exports.rejectBatch = async (batchId, reason, userId) => {
   batch.is_deleted = true;
   batch.deleted_at = new Date();
   batch.deleted_by = userId;
-  batch.status = "rejected";
+
+  // Set all items status to rejected
+  batch.items = batch.items.map((item) => ({
+    ...item,
+    status: "rejected",
+  }));
+
   await batch.save();
 
   return batch;
 };
 
 /**
- * Change product batch status
+ * Change product batch items status
  * @param {String} batchId - Batch ID
- * @param {String} newStatus - New status
+ * @param {String} newStatus - New status for items
  * @param {ObjectId} userId - User performing the change
  * @returns {Object} - Updated batch
  */
 exports.changeStatus = async (batchId, newStatus, userId) => {
-  const validStatuses = [
-    "instock",
-    "outdate",
-    "onsale",
-    "sold",
-    "near_expiry",
-    "expired",
-  ];
+  const validStatuses = ["instock", "outdate", "onsale", "sold"];
 
   if (!validStatuses.includes(newStatus)) {
     throw new Error(
@@ -605,8 +605,15 @@ exports.changeStatus = async (batchId, newStatus, userId) => {
     throw new Error("Không thể thay đổi trạng thái lô hàng đã bị từ chối");
   }
 
-  const oldStatus = batch.status;
-  batch.status = newStatus;
+  // Get old status (from first item for logging)
+  const oldStatus = batch.items[0]?.status || "unknown";
+
+  // Update status for all items in batch
+  batch.items = batch.items.map((item) => ({
+    ...item,
+    status: newStatus,
+  }));
+
   await batch.save();
 
   // Create inventory log for status change
