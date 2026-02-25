@@ -20,6 +20,9 @@ const couponRouter = require("./routes/admin/couponRouter");
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");
 const customerCategoryRouter = require("./routes/customer/categoryRouter");
+const customerCouponRouter = require("./routes/customer/couponRouter");
+const customerUserCouponRouter = require("./routes/customer/userCouponRouter");
+const customerRecipeRouter = require("./routes/customer/recipeRouter");
 
 var app = express();
 
@@ -59,6 +62,9 @@ app.use("/api/v1/auth", authRouter);
 // Customer routes (public - for mobile app)
 app.use("/api/v1/customer/products", customerProductRouter);
 app.use("/api/v1/customer/categories", customerCategoryRouter);
+app.use("/api/v1/customer/coupons", customerCouponRouter);
+app.use("/api/v1/customer/user-coupons", customerUserCouponRouter);
+app.use("/api/v1/customer/recipes", customerRecipeRouter);
 
 // Admin routes (require admin role)
 app.use("/api/v1/product-units", productUnitRouter);

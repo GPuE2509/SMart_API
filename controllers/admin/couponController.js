@@ -3,7 +3,7 @@ const couponService = require("../../services/admin/couponService");
 /**
  * Get all coupons with filters and pagination
  * GET /api/v1/coupons
- * Query params: code, status, discount_type, sort_by, sort_order, page, limit
+ * Query params: code, status, discount_type, is_expired, sort_by, sort_order, page, limit
  */
 exports.getAll = async (req, res) => {
   try {
