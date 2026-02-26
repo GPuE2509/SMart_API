@@ -331,3 +331,46 @@ exports.createStaffAccount = async (req, res) => {
     });
   }
 };
+
+/**
+ * Update user's face descriptor and face image URL
+ * PATCH /api/v1/users/:id/face-data
+ * Body: { face_descriptor, face_image (base64) }
+ */
+exports.updateUserFaceData = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { face_descriptor, face_image } = req.body;
+
+    if (!face_descriptor || !face_image) {
+      return res.status(400).json({
+        success: false,
+        message: "Face descriptor và face image là bắt buộc",
+      });
+    }
+
+    const user = await userService.updateUserFaceData(id, {
+      face_descriptor,
+      face_image,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy tài khoản",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Cập nhật dữ liệu khuôn mặt thành công",
+      data: user,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Không thể cập nhật dữ liệu khuôn mặt",
+      error: error.message,
+    });
+  }
+};
