@@ -1,6 +1,7 @@
 const User = require("../../models/User");
 const crypto = require('crypto');
 const emailService = require('../emailService');
+const { uploadImage } = require('../../utils/uploadImage');
 
 /**
  * Helper function to remove Vietnamese diacritics
@@ -335,3 +336,44 @@ exports.createStaffAccount = async (userData) => {
   return userResponse;
 };
 
+/**
+ * Update user's face descriptor and face image URL
+ * @param {String} id - User ID
+ * @param {Object} faceData - { face_descriptor, face_image (base64) }
+ * @returns {Object} - Updated user
+ */
+exports.updateUserFaceData = async (id, faceData) => {
+  const { face_descriptor, face_image } = faceData;
+
+  const user = await User.findById(id);
+
+  if (!user) {
+    return null;
+  }
+
+  try {
+    // Upload face image to Cloudinary
+    const face_image_url = await uploadImage(face_image, 'smart/faces');
+
+    // Update user's face data
+    user.face_descriptor = face_descriptor;
+    user.face_image_url = face_image_url;
+    user.updated_at = new Date();
+
+    await user.save();
+
+    // Return user without sensitive fields
+    const updatedUser = user.toObject();
+    delete updatedUser.password;
+    delete updatedUser.otp;
+    delete updatedUser.otpExpiry;
+    delete updatedUser.loginToken;
+    delete updatedUser.loginTokenExpiry;
+    delete updatedUser.loginSessionId;
+
+    return updatedUser;
+  } catch (error) {
+    console.error('Error updating face data:', error);
+    throw new Error('Không thể cập nhật dữ liệu khuôn mặt');
+  }
+};
