@@ -294,43 +294,43 @@ exports.importBatch = async (batchData, userId) => {
       throw new Error(`Số lượng của ${product.name} phải lớn hơn 0`);
     }
 
-    // Validate manufacture_date not in future
-    if (item.manufacture_date) {
-      const mfgDate = new Date(item.manufacture_date);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      mfgDate.setHours(0, 0, 0, 0);
+    // Validate manufacture_date is required
+    if (!item.manufacture_date) {
+      throw new Error(`Ngày sản xuất của ${product.name} là bắt buộc`);
+    }
 
-      if (mfgDate > today) {
-        throw new Error(
-          `Ngày sản xuất của ${product.name} không được ở tương lai`,
-        );
-      }
+    // Validate manufacture_date not in future
+    const mfgDate = new Date(item.manufacture_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    mfgDate.setHours(0, 0, 0, 0);
+
+    if (mfgDate > today) {
+      throw new Error(
+        `Ngày sản xuất của ${product.name} không được ở tương lai`,
+      );
+    }
+
+    // Validate expiry_date is required
+    if (!item.expiry_date) {
+      throw new Error(`Hạn sử dụng của ${product.name} là bắt buộc`);
     }
 
     // Validate expiry_date not in past
-    if (item.expiry_date) {
-      const expDate = new Date(item.expiry_date);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      expDate.setHours(0, 0, 0, 0);
+    const expDate = new Date(item.expiry_date);
+    expDate.setHours(0, 0, 0, 0);
 
-      if (expDate < today) {
-        throw new Error(`Hạn sử dụng của ${product.name} không được ở quá khứ`);
-      }
+    if (expDate < today) {
+      throw new Error(`Hạn sử dụng của ${product.name} không được ở quá khứ`);
     }
 
-    // Validate expiry date is after manufacture date for this item
-    if (item.manufacture_date && item.expiry_date) {
-      const mfgDate = new Date(item.manufacture_date);
-      const expDate = new Date(item.expiry_date);
-      const diffInDays = Math.ceil((expDate - mfgDate) / (1000 * 60 * 60 * 24));
+    // Validate expiry date is after manufacture date
+    const diffInDays = Math.ceil((expDate - mfgDate) / (1000 * 60 * 60 * 24));
 
-      if (diffInDays < 1) {
-        throw new Error(
-          `Hạn sử dụng của ${product.name} phải sau ngày sản xuất ít nhất 1 ngày`,
-        );
-      }
+    if (diffInDays < 1) {
+      throw new Error(
+        `Hạn sử dụng của ${product.name} phải sau ngày sản xuất ít nhất 1 ngày`,
+      );
     }
   }
 
