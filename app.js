@@ -20,6 +20,7 @@ const couponRouter = require("./routes/admin/couponRouter");
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");
 const customerCategoryRouter = require("./routes/customer/categoryRouter");
+const customerOrderRouter = require("./routes/customer/orderRouter");
 
 var app = express();
 
@@ -33,6 +34,7 @@ app.use(
       "http://172.24.32.1:8081", // Mobile device
       "http://192.168.1.7:8081",
       "http://10.66.162.41:8081",
+      "http://10.66.184.222:8081",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -59,6 +61,7 @@ app.use("/api/v1/auth", authRouter);
 // Customer routes (public - for mobile app)
 app.use("/api/v1/customer/products", customerProductRouter);
 app.use("/api/v1/customer/categories", customerCategoryRouter);
+app.use("/api/v1/customer/orders", customerOrderRouter);
 
 // Admin routes (require admin role)
 app.use("/api/v1/product-units", productUnitRouter);
