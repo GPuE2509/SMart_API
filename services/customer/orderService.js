@@ -2,6 +2,7 @@ const Order = require("../../models/Order");
 const OrderDetail = require("../../models/OrderDetail");
 const ProductBatch = require("../../models/ProductBatch");
 const ProductUnit = require("../../models/ProductUnit");
+const Product = require("../../models/Product");
 const User = require("../../models/User");
 const { payos } = require("../../config/payment");
 const mongoose = require("mongoose");
@@ -27,6 +28,7 @@ class OrderService {
 
       // Calculate totals
       let totalAmount = 0;
+      let taxAmount = 0;
       const orderItems = [];
 
       for (const item of items) {
@@ -79,6 +81,11 @@ class OrderService {
         const itemTotal = productUnit.price * item.quantity;
         totalAmount += itemTotal;
 
+        // Calculate tax based on product's tax_percentage
+        const itemTaxPercentage = productUnit.product_id.tax_percentage || 0;
+        const itemTax = (itemTotal * itemTaxPercentage) / 100;
+        taxAmount += itemTax;
+
         orderItems.push({
           product_unit_id: item.product_unit_id,
           product_batch_id: batch._id,
@@ -86,11 +93,13 @@ class OrderService {
           quantity: item.quantity,
           unit_price: productUnit.price,
           total_price: itemTotal,
+          // Store for updating product total_stock
+          product_id: productUnit.product_id._id,
+          exchange_value: productUnit.exchange_value,
         });
       }
 
-      // Calculate tax (10%)
-      const taxAmount = totalAmount * 0.1;
+      // Calculate final amount
       const finalAmount = totalAmount + taxAmount;
 
       // Create order
@@ -113,7 +122,12 @@ class OrderService {
       for (const item of orderItems) {
         const orderDetail = new OrderDetail({
           order_id: order._id,
-          ...item,
+          product_unit_id: item.product_unit_id,
+          product_batch_id: item.product_batch_id,
+          batch_item_id: item.batch_item_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
         });
         await orderDetail.save();
 
@@ -127,6 +141,17 @@ class OrderService {
             $inc: { "items.$.current_quantity": -item.quantity },
           },
         );
+
+        // Update product total_stock (convert to base unit)
+        const product = await Product.findById(item.product_id);
+        if (product) {
+          const quantityInBaseUnit = item.quantity * item.exchange_value;
+          product.total_stock = Math.max(
+            0,
+            (product.total_stock || 0) - quantityInBaseUnit,
+          );
+          await product.save();
+        }
       }
 
       return order;
