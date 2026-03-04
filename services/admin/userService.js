@@ -1,7 +1,7 @@
 const User = require("../../models/User");
-const crypto = require('crypto');
-const emailService = require('../emailService');
-const { uploadImage } = require('../../utils/uploadImage');
+const crypto = require("crypto");
+const emailService = require("../emailService");
+const { uploadImage } = require("../../utils/uploadImage");
 
 /**
  * Helper function to remove Vietnamese diacritics
@@ -169,7 +169,14 @@ exports.updateUser = async (id, userData) => {
   }
 
   // Update fields
-  const allowedFields = ["full_name", "email", "phone", "role", "avatar_url"];
+  const allowedFields = [
+    "full_name",
+    "email",
+    "phone",
+    "role",
+    "avatar_url",
+    "address",
+  ];
 
   allowedFields.forEach((field) => {
     if (userData[field] !== undefined) {
@@ -284,7 +291,9 @@ exports.createStaffAccount = async (userData) => {
   // Validate role (only staff and admin roles)
   const validRoles = ["admin", "seller_staff", "repository_staff"];
   if (!validRoles.includes(role)) {
-    throw new Error("Vai trò không hợp lệ. Chỉ có thể tạo tài khoản admin, seller_staff hoặc repository_staff");
+    throw new Error(
+      "Vai trò không hợp lệ. Chỉ có thể tạo tài khoản admin, seller_staff hoặc repository_staff",
+    );
   }
 
   // Check if email already exists
@@ -302,7 +311,7 @@ exports.createStaffAccount = async (userData) => {
   }
 
   // Generate verification token (valid for 24 hours)
-  const verificationToken = crypto.randomBytes(32).toString('hex');
+  const verificationToken = crypto.randomBytes(32).toString("hex");
   const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
   // Create new user without password (will be set after email verification)
@@ -311,18 +320,23 @@ exports.createStaffAccount = async (userData) => {
     email,
     phone,
     role,
-    status: 'active',
+    status: "active",
     isVerified: false,
     loginToken: verificationToken,
     loginTokenExpiry: verificationTokenExpiry,
     created_at: new Date(),
-    updated_at: new Date()
+    updated_at: new Date(),
   });
 
   await newUser.save();
 
   // Send invitation email
-  await emailService.sendAccountInvitationEmail(email, full_name, role, verificationToken);
+  await emailService.sendAccountInvitationEmail(
+    email,
+    full_name,
+    role,
+    verificationToken,
+  );
 
   // Return user without sensitive fields
   const userResponse = newUser.toObject();
@@ -353,7 +367,7 @@ exports.updateUserFaceData = async (id, faceData) => {
 
   try {
     // Upload face image to Cloudinary
-    const face_image_url = await uploadImage(face_image, 'smart/faces');
+    const face_image_url = await uploadImage(face_image, "smart/faces");
 
     // Update user's face data
     user.face_descriptor = face_descriptor;
@@ -373,7 +387,7 @@ exports.updateUserFaceData = async (id, faceData) => {
 
     return updatedUser;
   } catch (error) {
-    console.error('Error updating face data:', error);
-    throw new Error('Không thể cập nhật dữ liệu khuôn mặt');
+    console.error("Error updating face data:", error);
+    throw new Error("Không thể cập nhật dữ liệu khuôn mặt");
   }
 };

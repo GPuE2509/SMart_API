@@ -35,6 +35,7 @@ app.use(
       "http://192.168.1.7:8081",
       "http://10.66.162.41:8081",
       "http://10.66.184.222:8081",
+      "http://10.66.169.60:8081", // ✅ Current WiFi IP - Updated automatically
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
