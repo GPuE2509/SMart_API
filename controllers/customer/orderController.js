@@ -181,6 +181,31 @@ class OrderController {
       });
     }
   }
+
+  /**
+   * Search/filter products in cart
+   * GET /api/v1/customer/orders/cart/search
+   * Query params: search, category_id, min_price, max_price, sort_by
+   */
+  async searchCart(req, res) {
+    try {
+      const userId = req.user.id;
+      const result = await orderService.searchCartItems(userId, req.query);
+
+      res.json({
+        success: true,
+        message: "Tìm kiếm trong giỏ hàng thành công",
+        data: result.items,
+        summary: result.summary,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Không thể tìm kiếm trong giỏ hàng",
+        error: error.message,
+      });
+    }
+  }
 }
 
 module.exports = new OrderController();

@@ -3,6 +3,9 @@ const router = express.Router();
 const orderController = require("../../controllers/customer/orderController");
 const { authenticateUser } = require("../../middleware/authMiddleware");
 
+// Search/filter products in cart
+router.get("/cart/search", authenticateUser, orderController.searchCart);
+
 // Create new order
 router.post("/", authenticateUser, orderController.createOrder);
 
