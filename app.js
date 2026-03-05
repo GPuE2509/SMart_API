@@ -17,6 +17,10 @@ const attendanceRouter = require("./routes/admin/attendanceRouter");
 const productBatchRouter = require("./routes/repository_staff/productBatchRouter");
 const couponRouter = require("./routes/admin/couponRouter");
 
+// Admin reports and recipe routes
+const salesReportRouter = require("./routes/admin/salesReportRouter");
+const recipeRouter = require("./routes/admin/recipeRouter");
+
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");
 const customerCategoryRouter = require("./routes/customer/categoryRouter");
@@ -74,6 +78,10 @@ app.use("/api/v1/attendance", attendanceRouter);
 // Repository staff routes (require repository_staff role)
 app.use("/api/v1/batches", productBatchRouter);
 app.use("/api/v1/coupons", couponRouter);
+
+// Admin reports routes
+app.use("/api/v1/admin/reports", salesReportRouter);
+app.use("/api/v1/recipes", recipeRouter);
 
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {

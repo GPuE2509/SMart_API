@@ -4,8 +4,22 @@ const ProductBatch = require("../../models/ProductBatch");
 const ProductUnit = require("../../models/ProductUnit");
 const Product = require("../../models/Product");
 const User = require("../../models/User");
+const CartItem = require("../../models/CartItem");
 const { payos } = require("../../config/payment");
 const mongoose = require("mongoose");
+
+/**
+ * Remove Vietnamese diacritics for search
+ */
+const removeVietnameseDiacritics = (str) => {
+  if (!str) return "";
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+};
 
 class OrderService {
   // Generate unique order code
@@ -330,6 +344,144 @@ class OrderService {
         total,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  // ==================== CART SEARCH/FILTER ====================
+
+  /**
+   * Search/filter cart items
+   * @param {String} userId - User ID
+   * @param {Object} filters - { search, category_id, min_price, max_price, sort_by }
+   */
+  async searchCartItems(userId, filters = {}) {
+    const {
+      search,
+      category_id,
+      min_price,
+      max_price,
+      sort_by = "newest",
+    } = filters;
+
+    // Get all cart items for user
+    const cartItems = await CartItem.find({ user_id: userId })
+      .populate({
+        path: "product_unit_id",
+        populate: [
+          {
+            path: "product_id",
+            populate: {
+              path: "category_id",
+              select: "name",
+            },
+          },
+          {
+            path: "unit_id",
+            select: "name",
+          },
+        ],
+      })
+      .lean();
+
+    // Transform cart items with full product info
+    let items = cartItems.map((item) => {
+      const productUnit = item.product_unit_id;
+      const product = productUnit?.product_id;
+      const category = product?.category_id;
+      const unit = productUnit?.unit_id;
+
+      return {
+        _id: item._id,
+        quantity: item.quantity,
+        product_unit_id: productUnit?._id,
+        product: {
+          _id: product?._id,
+          name: product?.name,
+          description: product?.description,
+          image_url: product?.image_url,
+          category_id: category?._id,
+          category_name: category?.name,
+        },
+        unit: {
+          _id: unit?._id,
+          name: unit?.name,
+        },
+        price: productUnit?.price || 0,
+        total_price: (productUnit?.price || 0) * item.quantity,
+        created_at: item.createdAt,
+      };
+    });
+
+    // Filter by search (product name or description)
+    if (search) {
+      const searchNormalized = removeVietnameseDiacritics(search);
+      items = items.filter((item) => {
+        const nameNormalized = removeVietnameseDiacritics(
+          item.product?.name || "",
+        );
+        const descNormalized = removeVietnameseDiacritics(
+          item.product?.description || "",
+        );
+        return (
+          nameNormalized.includes(searchNormalized) ||
+          descNormalized.includes(searchNormalized)
+        );
+      });
+    }
+
+    // Filter by category
+    if (category_id) {
+      items = items.filter(
+        (item) => item.product?.category_id?.toString() === category_id,
+      );
+    }
+
+    // Filter by price range
+    if (min_price) {
+      items = items.filter((item) => item.price >= parseInt(min_price));
+    }
+    if (max_price) {
+      items = items.filter((item) => item.price <= parseInt(max_price));
+    }
+
+    // Sort items
+    switch (sort_by) {
+      case "name":
+        items.sort((a, b) =>
+          (a.product?.name || "").localeCompare(b.product?.name || ""),
+        );
+        break;
+      case "price-asc":
+        items.sort((a, b) => a.price - b.price);
+        break;
+      case "price-desc":
+        items.sort((a, b) => b.price - a.price);
+        break;
+      case "quantity-asc":
+        items.sort((a, b) => a.quantity - b.quantity);
+        break;
+      case "quantity-desc":
+        items.sort((a, b) => b.quantity - a.quantity);
+        break;
+      case "oldest":
+        items.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        break;
+      case "newest":
+      default:
+        items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        break;
+    }
+
+    // Calculate cart summary
+    const summary = {
+      total_items: items.length,
+      total_quantity: items.reduce((sum, item) => sum + item.quantity, 0),
+      total_amount: items.reduce((sum, item) => sum + item.total_price, 0),
+    };
+
+    return {
+      items,
+      summary,
     };
   }
 }
