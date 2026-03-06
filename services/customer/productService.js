@@ -145,7 +145,42 @@ const productService = {
         .populate("unit_id", "name")
         .lean();
 
+      // Calculate available stock for each unit from ProductBatch
+      const ProductBatch = require("../../models/ProductBatch");
+
+      for (let unit of units) {
+        // Find all batches that have this product + unit combination with stock
+        const batches = await ProductBatch.find({
+          "items.product_id": product._id,
+          "items.unit_id": unit.unit_id._id,
+          "items.status": "instock",
+          is_deleted: false,
+        }).lean();
+
+        // Sum up current_quantity from all matching batch items
+        let totalStock = 0;
+        for (let batch of batches) {
+          for (let item of batch.items) {
+            if (
+              item.product_id.toString() === product._id.toString() &&
+              item.unit_id.toString() === unit.unit_id._id.toString() &&
+              item.status === "instock"
+            ) {
+              totalStock += item.current_quantity;
+            }
+          }
+        }
+
+        unit.available_stock = totalStock;
+      }
+
       product.units = units;
+
+      // Calculate total stock across all units
+      product.total_stock = units.reduce(
+        (sum, unit) => sum + (unit.available_stock || 0),
+        0,
+      );
 
       return {
         success: true,

@@ -28,9 +28,11 @@ const batchItemSchema = new mongoose.Schema(
     },
     manufacture_date: {
       type: Date,
+      required: [true, "Ngày sản xuất là bắt buộc"],
     },
     expiry_date: {
       type: Date,
+      required: [true, "Hạn sử dụng là bắt buộc"],
     },
     supplier_name: {
       type: String,

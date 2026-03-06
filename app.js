@@ -17,12 +17,17 @@ const attendanceRouter = require("./routes/admin/attendanceRouter");
 const productBatchRouter = require("./routes/repository_staff/productBatchRouter");
 const couponRouter = require("./routes/admin/couponRouter");
 
+// Admin reports and recipe routes
+const salesReportRouter = require("./routes/admin/salesReportRouter");
+const recipeRouter = require("./routes/admin/recipeRouter");
+
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");
 const customerCategoryRouter = require("./routes/customer/categoryRouter");
 const customerCouponRouter = require("./routes/customer/couponRouter");
 const customerUserCouponRouter = require("./routes/customer/userCouponRouter");
 const customerRecipeRouter = require("./routes/customer/recipeRouter");
+const customerOrderRouter = require("./routes/customer/orderRouter");
 
 var app = express();
 
@@ -36,6 +41,8 @@ app.use(
       "http://172.24.32.1:8081", // Mobile device
       "http://192.168.1.7:8081",
       "http://10.66.162.41:8081",
+      "http://10.66.184.222:8081",
+      "http://10.66.169.60:8081", // ✅ Current WiFi IP - Updated automatically
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -65,6 +72,7 @@ app.use("/api/v1/customer/categories", customerCategoryRouter);
 app.use("/api/v1/customer/coupons", customerCouponRouter);
 app.use("/api/v1/customer/user-coupons", customerUserCouponRouter);
 app.use("/api/v1/customer/recipes", customerRecipeRouter);
+app.use("/api/v1/customer/orders", customerOrderRouter);
 
 // Admin routes (require admin role)
 app.use("/api/v1/product-units", productUnitRouter);
@@ -76,6 +84,10 @@ app.use("/api/v1/attendance", attendanceRouter);
 // Repository staff routes (require repository_staff role)
 app.use("/api/v1/batches", productBatchRouter);
 app.use("/api/v1/coupons", couponRouter);
+
+// Admin reports routes
+app.use("/api/v1/admin/reports", salesReportRouter);
+app.use("/api/v1/recipes", recipeRouter);
 
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {

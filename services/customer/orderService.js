@@ -1,0 +1,489 @@
+const Order = require("../../models/Order");
+const OrderDetail = require("../../models/OrderDetail");
+const ProductBatch = require("../../models/ProductBatch");
+const ProductUnit = require("../../models/ProductUnit");
+const Product = require("../../models/Product");
+const User = require("../../models/User");
+const CartItem = require("../../models/CartItem");
+const { payos } = require("../../config/payment");
+const mongoose = require("mongoose");
+
+/**
+ * Remove Vietnamese diacritics for search
+ */
+const removeVietnameseDiacritics = (str) => {
+  if (!str) return "";
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+};
+
+class OrderService {
+  // Generate unique order code
+  generateOrderCode() {
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 1000);
+    return `ORD${timestamp}${random}`;
+  }
+
+  // Create new order
+  async createOrder(userId, orderData) {
+    try {
+      const { items, couponCode, paymentMethod } = orderData;
+
+      // Validate user
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      // Calculate totals
+      let totalAmount = 0;
+      let taxAmount = 0;
+      const orderItems = [];
+
+      for (const item of items) {
+        const productUnit = await ProductUnit.findById(item.product_unit_id)
+          .populate("product_id")
+          .populate("unit_id");
+
+        if (!productUnit) {
+          throw new Error(`Product unit not found: ${item.product_unit_id}`);
+        }
+
+        if (!productUnit.unit_id) {
+          throw new Error(
+            `Unit not found for product: ${productUnit.product_id.name}`,
+          );
+        }
+
+        // Find available batch with matching product and unit
+        // ProductBatch has nested items array structure
+        const batch = await ProductBatch.findOne({
+          "items.product_id": productUnit.product_id._id,
+          "items.unit_id": productUnit.unit_id._id,
+          "items.current_quantity": { $gte: item.quantity },
+          "items.status": "instock",
+          is_deleted: false,
+        }).sort({ created_at: 1 });
+
+        if (!batch) {
+          throw new Error(
+            `Not enough stock for product: ${productUnit.product_id.name}`,
+          );
+        }
+
+        // Find the specific item within batch
+        const batchItem = batch.items.find(
+          (bItem) =>
+            bItem.product_id.toString() ===
+              productUnit.product_id._id.toString() &&
+            bItem.unit_id.toString() === productUnit.unit_id._id.toString() &&
+            bItem.current_quantity >= item.quantity &&
+            bItem.status === "instock",
+        );
+
+        if (!batchItem) {
+          throw new Error(
+            `No available batch item for product: ${productUnit.product_id.name}`,
+          );
+        }
+
+        const itemTotal = productUnit.price * item.quantity;
+        totalAmount += itemTotal;
+
+        // Calculate tax based on product's tax_percentage
+        const itemTaxPercentage = productUnit.product_id.tax_percentage || 0;
+        const itemTax = (itemTotal * itemTaxPercentage) / 100;
+        taxAmount += itemTax;
+
+        orderItems.push({
+          product_unit_id: item.product_unit_id,
+          product_batch_id: batch._id,
+          batch_item_id: batchItem._id, // Store the specific item ID
+          quantity: item.quantity,
+          unit_price: productUnit.price,
+          total_price: itemTotal,
+          // Store for updating product total_stock
+          product_id: productUnit.product_id._id,
+          exchange_value: productUnit.exchange_value,
+        });
+      }
+
+      // Calculate final amount
+      const finalAmount = totalAmount + taxAmount;
+
+      // Create order
+      const orderCode = this.generateOrderCode();
+      const order = new Order({
+        order_code: orderCode,
+        user_id: userId,
+        total_amount: totalAmount,
+        tax_amount: taxAmount,
+        final_amount: finalAmount,
+        payment_method: paymentMethod,
+        payment_status: "unpaid",
+        order_status: "pending",
+        order_type: "online",
+      });
+
+      await order.save();
+
+      // Create order details
+      for (const item of orderItems) {
+        const orderDetail = new OrderDetail({
+          order_id: order._id,
+          product_unit_id: item.product_unit_id,
+          product_batch_id: item.product_batch_id,
+          batch_item_id: item.batch_item_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
+        });
+        await orderDetail.save();
+
+        // Update batch item quantity (nested array structure)
+        await ProductBatch.updateOne(
+          {
+            _id: item.product_batch_id,
+            "items._id": item.batch_item_id,
+          },
+          {
+            $inc: { "items.$.current_quantity": -item.quantity },
+          },
+        );
+
+        // Update product total_stock (convert to base unit)
+        const product = await Product.findById(item.product_id);
+        if (product) {
+          const quantityInBaseUnit = item.quantity * item.exchange_value;
+          product.total_stock = Math.max(
+            0,
+            (product.total_stock || 0) - quantityInBaseUnit,
+          );
+          await product.save();
+        }
+      }
+
+      return order;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Create PayOS payment link
+  async createPayOSPayment(orderId) {
+    try {
+      const order = await Order.findById(orderId).populate(
+        "user_id",
+        "username email",
+      );
+
+      if (!order) {
+        throw new Error("Order not found");
+      }
+
+      if (order.payment_status === "paid") {
+        throw new Error("Order already paid");
+      }
+
+      // Get order details
+      const orderDetails = await OrderDetail.find({
+        order_id: orderId,
+      }).populate({
+        path: "product_unit_id",
+        populate: { path: "product_id" },
+      });
+
+      // Prepare items for PayOS
+      const items = orderDetails.map((detail) => ({
+        name: detail.product_unit_id.product_id.name,
+        quantity: detail.quantity,
+        price: Math.round(detail.unit_price),
+      }));
+
+      // Create payment data
+      const paymentData = {
+        orderCode: Number(Date.now()), // PayOS requires number
+        amount: Math.round(order.final_amount),
+        description: `DH ${order.order_code.slice(-8)}`, // Max 25 chars
+        items: items,
+        returnUrl: process.env.PAYOS_RETURN_URL,
+        cancelUrl: process.env.PAYOS_CANCEL_URL,
+      };
+
+      // Create payment link via PayOS
+      const paymentLink = await payos.paymentRequests.create(paymentData);
+
+      // Save PayOS orderCode to order for later verification
+      order.payos_order_code = paymentData.orderCode;
+      await order.save();
+
+      return {
+        checkoutUrl: paymentLink.checkoutUrl,
+        qrCode: paymentLink.qrCode,
+        paymentLinkId: paymentLink.paymentLinkId,
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Verify PayOS payment via webhook
+  async verifyPayOSWebhook(webhookData) {
+    try {
+      const { orderCode, amount, description, code, id } = webhookData;
+
+      // Get payment info from PayOS
+      const paymentInfo = await payos.paymentRequests.get(id);
+
+      if (paymentInfo.status === "PAID") {
+        // Find order by PayOS orderCode
+        const order = await Order.findOne({ payos_order_code: orderCode });
+
+        if (!order) {
+          throw new Error("Order not found");
+        }
+
+        // Update order status
+        order.payment_status = "paid";
+        order.order_status = "processing";
+        await order.save();
+
+        return order;
+      }
+
+      return null;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Get order by ID
+  async getOrderById(orderId, userId) {
+    const order = await Order.findOne({ _id: orderId, user_id: userId })
+      .populate("user_id", "username email")
+      .populate("coupon_id");
+
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    const orderDetails = await OrderDetail.find({ order_id: orderId }).populate(
+      {
+        path: "product_unit_id",
+        populate: { path: "product_id unit_id" },
+      },
+    );
+
+    return { order, orderDetails };
+  }
+
+  // Check and update PayOS payment status
+  async checkAndUpdatePaymentStatus(orderId, userId) {
+    try {
+      const order = await Order.findOne({ _id: orderId, user_id: userId });
+
+      if (!order) {
+        throw new Error("Order not found");
+      }
+
+      // Only check PayOS orders that are unpaid
+      if (
+        order.payment_method === "payos" &&
+        order.payment_status === "unpaid"
+      ) {
+        if (!order.payos_order_code) {
+          throw new Error("PayOS order code not found");
+        }
+
+        try {
+          // Get payment status from PayOS
+          const paymentInfo = await payos.paymentRequests.get(
+            order.payos_order_code,
+          );
+
+          // Update order if paid
+          if (paymentInfo.status === "PAID") {
+            order.payment_status = "paid";
+            order.order_status = "processing";
+            await order.save();
+          }
+        } catch (payosError) {
+          console.error("PayOS API error:", payosError.message);
+          // Don't throw error, just return current order status
+        }
+      }
+
+      return order;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Get user orders
+  async getUserOrders(userId, page = 1, limit = 10) {
+    const skip = (page - 1) * limit;
+
+    const orders = await Order.find({ user_id: userId })
+      .sort({ created_at: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("coupon_id");
+
+    const total = await Order.countDocuments({ user_id: userId });
+
+    return {
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // ==================== CART SEARCH/FILTER ====================
+
+  /**
+   * Search/filter cart items
+   * @param {String} userId - User ID
+   * @param {Object} filters - { search, category_id, min_price, max_price, sort_by }
+   */
+  async searchCartItems(userId, filters = {}) {
+    const {
+      search,
+      category_id,
+      min_price,
+      max_price,
+      sort_by = "newest",
+    } = filters;
+
+    // Get all cart items for user
+    const cartItems = await CartItem.find({ user_id: userId })
+      .populate({
+        path: "product_unit_id",
+        populate: [
+          {
+            path: "product_id",
+            populate: {
+              path: "category_id",
+              select: "name",
+            },
+          },
+          {
+            path: "unit_id",
+            select: "name",
+          },
+        ],
+      })
+      .lean();
+
+    // Transform cart items with full product info
+    let items = cartItems.map((item) => {
+      const productUnit = item.product_unit_id;
+      const product = productUnit?.product_id;
+      const category = product?.category_id;
+      const unit = productUnit?.unit_id;
+
+      return {
+        _id: item._id,
+        quantity: item.quantity,
+        product_unit_id: productUnit?._id,
+        product: {
+          _id: product?._id,
+          name: product?.name,
+          description: product?.description,
+          image_url: product?.image_url,
+          category_id: category?._id,
+          category_name: category?.name,
+        },
+        unit: {
+          _id: unit?._id,
+          name: unit?.name,
+        },
+        price: productUnit?.price || 0,
+        total_price: (productUnit?.price || 0) * item.quantity,
+        created_at: item.createdAt,
+      };
+    });
+
+    // Filter by search (product name or description)
+    if (search) {
+      const searchNormalized = removeVietnameseDiacritics(search);
+      items = items.filter((item) => {
+        const nameNormalized = removeVietnameseDiacritics(
+          item.product?.name || "",
+        );
+        const descNormalized = removeVietnameseDiacritics(
+          item.product?.description || "",
+        );
+        return (
+          nameNormalized.includes(searchNormalized) ||
+          descNormalized.includes(searchNormalized)
+        );
+      });
+    }
+
+    // Filter by category
+    if (category_id) {
+      items = items.filter(
+        (item) => item.product?.category_id?.toString() === category_id,
+      );
+    }
+
+    // Filter by price range
+    if (min_price) {
+      items = items.filter((item) => item.price >= parseInt(min_price));
+    }
+    if (max_price) {
+      items = items.filter((item) => item.price <= parseInt(max_price));
+    }
+
+    // Sort items
+    switch (sort_by) {
+      case "name":
+        items.sort((a, b) =>
+          (a.product?.name || "").localeCompare(b.product?.name || ""),
+        );
+        break;
+      case "price-asc":
+        items.sort((a, b) => a.price - b.price);
+        break;
+      case "price-desc":
+        items.sort((a, b) => b.price - a.price);
+        break;
+      case "quantity-asc":
+        items.sort((a, b) => a.quantity - b.quantity);
+        break;
+      case "quantity-desc":
+        items.sort((a, b) => b.quantity - a.quantity);
+        break;
+      case "oldest":
+        items.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        break;
+      case "newest":
+      default:
+        items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        break;
+    }
+
+    // Calculate cart summary
+    const summary = {
+      total_items: items.length,
+      total_quantity: items.reduce((sum, item) => sum + item.quantity, 0),
+      total_amount: items.reduce((sum, item) => sum + item.total_price, 0),
+    };
+
+    return {
+      items,
+      summary,
+    };
+  }
+}
+
+module.exports = new OrderService();

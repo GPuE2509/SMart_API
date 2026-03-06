@@ -4,16 +4,16 @@ class AttendanceController {
   // Register face for staff (Admin only)
   async registerStaffFace(req, res) {
     try {
-      const { userId, faceDescriptor, faceImageUrl } = req.body;
+      const { userId, faceDescriptor, faceImage } = req.body;
 
-      if (!userId || !faceDescriptor || !faceImageUrl) {
+      if (!userId || !faceDescriptor || !faceImage) {
         return res.status(400).json({
           success: false,
           message: 'User ID, face descriptor, and face image are required'
         });
       }
 
-      const result = await attendanceService.registerStaffFace(userId, faceDescriptor, faceImageUrl);
+      const result = await attendanceService.registerStaffFace(userId, faceDescriptor, faceImage);
       return res.status(200).json(result);
     } catch (error) {
       return res.status(500).json({
@@ -102,9 +102,16 @@ class AttendanceController {
   // Get all staff attendance (Admin only)
   async getAllStaffAttendance(req, res) {
     try {
-      const { startDate, endDate, role } = req.query;
+      const { startDate, endDate, role, search, page, limit } = req.query;
 
-      const result = await attendanceService.getAllStaffAttendance(startDate, endDate, role);
+      const result = await attendanceService.getAllStaffAttendance(
+        startDate, 
+        endDate, 
+        role, 
+        search,
+        parseInt(page) || 1,
+        parseInt(limit) || 10
+      );
       return res.status(200).json(result);
     } catch (error) {
       return res.status(500).json({

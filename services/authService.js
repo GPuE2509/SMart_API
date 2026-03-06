@@ -15,7 +15,7 @@ const comparePassword = async (password, hashedPassword) => {
 };
 
 const generateToken = (user) => {
-    const token = jwt.sign({ userId: user._id}, process.env.JWT_SECRET, {
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
         expiresIn: '6h'
     });
     return token;
@@ -31,7 +31,7 @@ exports.verifyToken = (token) => {
 
 exports.signup = async (userData) => {
     try {
-        const {full_name, email, password, phone} = userData;
+        const { full_name, email, password, phone } = userData;
 
         // Check if user already exists
         const existingUser = await users.findOne({ email });
@@ -41,27 +41,27 @@ exports.signup = async (userData) => {
                 // Update user info
                 existingUser.full_name = full_name;
                 existingUser.phone = phone;
-                
+
                 // Hash new password
                 const hashedPassword = await hashPassword(password);
                 existingUser.password = hashedPassword;
-                
+
                 // Generate new OTP
                 const otp = generateOTP();
-                const otpExpiry = new Date(Date.now() + 7 * 60 * 60 * 1000 + 5 * 60 * 1000);
-                
+                const otpExpiry = new Date(new Date().getTime() + 5 * 60 * 1000);
+
                 existingUser.otp = otp;
                 existingUser.otpExpiry = otpExpiry;
                 existingUser.updated_at = new Date();
-                
+
                 await existingUser.save();
-                
+
                 // Resend OTP email
                 await emailService.sendOTPEmail(email, otp, full_name);
-                
+
                 return existingUser._id;
             }
-            
+
             // If user exists and already verified
             throw new Error('Email đã tồn tại');
         }
@@ -72,7 +72,7 @@ exports.signup = async (userData) => {
         // Generate OTP
         const otp = generateOTP();
         // 5 minutes from now in Vietnam timezone (UTC+7)
-        const otpExpiry = new Date(Date.now() + 7 * 60 * 60 * 1000 + 5 * 60 * 1000);
+        const otpExpiry = new Date(new Date().getTime() + 5 * 60 * 1000);
 
         // Create new user
         const user = new users({
@@ -91,7 +91,7 @@ exports.signup = async (userData) => {
 
         // Send OTP email
         await emailService.sendOTPEmail(email, otp, full_name);
-        
+
         // Remove password from response
         const userResponse = savedUser._id
         return userResponse;
@@ -135,7 +135,7 @@ exports.signin = async (email, password) => {
 exports.verifyOTP = async (email, otp) => {
     try {
         const user = await users.findOne({ email });
-        
+
         if (!user) {
             throw new Error('Không tìm thấy tài khoản với email này');
         }
@@ -149,9 +149,9 @@ exports.verifyOTP = async (email, otp) => {
         }
 
         // Check if OTP is expired - compare timestamps
-        const currentTime = new Date(Date.now() + 7 * 60 * 60 * 1000); // Vietnam time
+        const currentTime = new Date(new Date().getTime()); // Vietnam time
         const expiryTime = new Date(user.otpExpiry);
-        
+
         if (currentTime > expiryTime) {
             throw new Error('Mã OTP đã hết hạn. Vui lòng yêu cầu gửi lại OTP');
         }
@@ -171,9 +171,9 @@ exports.verifyOTP = async (email, otp) => {
         // Send welcome email
         await emailService.sendWelcomeEmail(email, user.full_name);
 
-        return { 
+        return {
             message: 'Xác thực tài khoản thành công',
-            userId: user._id 
+            userId: user._id
         };
     } catch (error) {
         throw error;
@@ -184,7 +184,7 @@ exports.verifyOTP = async (email, otp) => {
 exports.resendOTP = async (email) => {
     try {
         const user = await users.findOne({ email });
-        
+
         if (!user) {
             throw new Error('Không tìm thấy tài khoản với email này');
         }
@@ -196,7 +196,7 @@ exports.resendOTP = async (email) => {
         // Generate new OTP
         const otp = generateOTP();
         // 5 minutes from now in Vietnam timezone (UTC+7)
-        const otpExpiry = new Date(Date.now() + 7 * 60 * 60 * 1000 + 5 * 60 * 1000);
+        const otpExpiry = new Date(new Date().getTime() + 5 * 60 * 1000);
 
         user.otp = otp;
         user.otpExpiry = otpExpiry;
@@ -206,9 +206,9 @@ exports.resendOTP = async (email) => {
         // Send new OTP email
         await emailService.sendOTPEmail(email, otp, user.full_name);
 
-        return { 
+        return {
             message: 'Mã OTP mới đã được gửi đến email của bạn',
-            userId: user._id 
+            userId: user._id
         };
     } catch (error) {
         throw error;
@@ -219,7 +219,7 @@ exports.resendOTP = async (email) => {
 exports.forgotPassword = async (email) => {
     try {
         const user = await users.findOne({ email });
-        
+
         if (!user) {
             throw new Error('Không tìm thấy tài khoản với email này');
         }
@@ -230,7 +230,7 @@ exports.forgotPassword = async (email) => {
 
         // Generate OTP for password reset
         const otp = generateOTP();
-        const otpExpiry = new Date(Date.now() + 7 * 60 * 60 * 1000 + 5 * 60 * 1000); // 5 minutes
+        const otpExpiry = new Date(new Date().getTime() + 5 * 60 * 1000); // 5 minutes
 
         user.otp = otp;
         user.otpExpiry = otpExpiry;
@@ -240,9 +240,9 @@ exports.forgotPassword = async (email) => {
         // Send password reset OTP email
         await emailService.sendPasswordResetOTP(email, otp, user.full_name);
 
-        return { 
+        return {
             message: 'Mã OTP đặt lại mật khẩu đã được gửi đến email của bạn',
-            userId: user._id 
+            userId: user._id
         };
     } catch (error) {
         throw error;
@@ -253,7 +253,7 @@ exports.forgotPassword = async (email) => {
 exports.resetPassword = async (email, otp, newPassword) => {
     try {
         const user = await users.findOne({ email });
-        
+
         if (!user) {
             throw new Error('Không tìm thấy tài khoản với email này');
         }
@@ -267,9 +267,9 @@ exports.resetPassword = async (email, otp, newPassword) => {
         }
 
         // Check if OTP is expired
-        const currentTime = new Date(Date.now() + 7 * 60 * 60 * 1000); // Vietnam time
+        const currentTime = new Date(new Date().getTime()); // Vietnam time
         const expiryTime = new Date(user.otpExpiry);
-        
+
         if (currentTime > expiryTime) {
             throw new Error('Mã OTP đã hết hạn. Vui lòng yêu cầu gửi lại OTP');
         }
@@ -292,9 +292,9 @@ exports.resetPassword = async (email, otp, newPassword) => {
         // Send password reset success email
         await emailService.sendPasswordResetSuccess(email, user.full_name);
 
-        return { 
+        return {
             message: 'Mật khẩu đã được đặt lại thành công',
-            userId: user._id 
+            userId: user._id
         };
     } catch (error) {
         throw error;
@@ -305,7 +305,7 @@ exports.resetPassword = async (email, otp, newPassword) => {
 exports.verifyPasswordResetOTP = async (email, otp) => {
     try {
         const user = await users.findOne({ email });
-        
+
         if (!user) {
             throw new Error('Không tìm thấy tài khoản với email này');
         }
@@ -319,9 +319,9 @@ exports.verifyPasswordResetOTP = async (email, otp) => {
         }
 
         // Check if OTP is expired
-        const currentTime = new Date(Date.now() + 7 * 60 * 60 * 1000); // Vietnam time
+        const currentTime = new Date(new Date().getTime()); // Vietnam time
         const expiryTime = new Date(user.otpExpiry);
-        
+
         if (currentTime > expiryTime) {
             throw new Error('Mã OTP đã hết hạn. Vui lòng yêu cầu gửi lại OTP');
         }
@@ -331,9 +331,9 @@ exports.verifyPasswordResetOTP = async (email, otp) => {
             throw new Error('Mã OTP không đúng');
         }
 
-        return { 
+        return {
             message: 'Mã OTP hợp lệ',
-            userId: user._id 
+            userId: user._id
         };
     } catch (error) {
         throw error;
@@ -344,7 +344,7 @@ exports.verifyPasswordResetOTP = async (email, otp) => {
 exports.changePassword = async (userId, oldPassword, newPassword) => {
     try {
         const user = await users.findById(userId);
-        
+
         if (!user) {
             throw new Error('Không tìm thấy tài khoản');
         }
@@ -369,7 +369,7 @@ exports.changePassword = async (userId, oldPassword, newPassword) => {
         user.updated_at = new Date();
         await user.save();
 
-        return { 
+        return {
             message: 'Đổi mật khẩu thành công'
         };
     } catch (error) {
@@ -381,7 +381,7 @@ exports.changePassword = async (userId, oldPassword, newPassword) => {
 exports.staffAdminLogin = async (email, password, sessionId) => {
     try {
         const user = await users.findOne({ email });
-        
+
         if (!user) {
             throw new Error('Email hoặc mật khẩu không đúng');
         }
@@ -409,7 +409,14 @@ exports.staffAdminLogin = async (email, password, sessionId) => {
 
         // Generate login token
         const loginToken = crypto.randomBytes(32).toString('hex');
-        const loginTokenExpiry = new Date(Date.now() + 7 * 60 * 60 * 1000 + 5 * 60 * 1000); // 5 minutes
+        const loginTokenExpiry = new Date(new Date().getTime() + 5 * 60 * 1000); // 5 minutes
+        const now = new Date();
+
+        console.log("Raw:", now);
+        console.log("toISOString:", now.toISOString());
+        console.log("toString:", now.toString());
+        console.log("toLocaleString:", now.toLocaleString());
+        console.log(Intl.DateTimeFormat().resolvedOptions().timeZone);
 
         // Save login token and sessionId
         user.loginToken = loginToken;
@@ -446,7 +453,7 @@ exports.verifyStaffAdminLogin = async (loginToken, action) => {
         }
 
         // Check if token is expired
-        const currentTime = new Date(Date.now() + 7 * 60 * 60 * 1000); // Vietnam time
+        const currentTime = new Date(new Date().getTime()); // Vietnam time
         const expiryTime = new Date(user.loginTokenExpiry);
 
         if (currentTime > expiryTime) {

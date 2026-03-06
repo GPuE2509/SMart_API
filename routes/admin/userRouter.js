@@ -60,4 +60,11 @@ router.put(
   userController.updateRole,
 );
 
+// Update user's face data (descriptor and image)
+router.patch(
+  "/:id/face-data",
+  authenticateUser,
+  userController.updateUserFaceData,
+);
+
 module.exports = router;

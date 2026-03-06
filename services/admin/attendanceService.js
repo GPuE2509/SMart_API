@@ -1,10 +1,11 @@
 const User = require('../../models/User');
 const StaffAttendance = require('../../models/StaffAttendance');
 const mongoose = require('mongoose');
+const { uploadImage } = require('../../utils/uploadImage');
 
 class AttendanceService {
   // Register face descriptor for staff
-  async registerStaffFace(userId, faceDescriptor, faceImageUrl) {
+  async registerStaffFace(userId, faceDescriptor, faceImage) {
     try {
       const user = await User.findById(userId);
       
@@ -16,8 +17,11 @@ class AttendanceService {
         throw new Error('Only staff members can register face for attendance');
       }
 
+      // Upload face image to Cloudinary
+      const face_image_url = await uploadImage(faceImage, 'smart/faces');
+
       user.face_descriptor = faceDescriptor;
-      user.face_image_url = faceImageUrl;
+      user.face_image_url = face_image_url;
       await user.save();
 
       return {
@@ -169,39 +173,97 @@ class AttendanceService {
   }
 
   // Get all staff attendance (for admin)
-  async getAllStaffAttendance(startDate, endDate, role) {
+  async getAllStaffAttendance(startDate, endDate, role, search, page = 1, limit = 10) {
     try {
-      const query = {};
-      
+      // Build aggregation pipeline
+      const pipeline = [];
+
+      // Match by date range
+      const matchStage = {};
       if (startDate || endDate) {
-        query.check_in_time = {};
-        if (startDate) query.check_in_time.$gte = new Date(startDate);
+        matchStage.check_in_time = {};
+        if (startDate) matchStage.check_in_time.$gte = new Date(startDate);
         if (endDate) {
           const end = new Date(endDate);
           end.setHours(23, 59, 59, 999);
-          query.check_in_time.$lte = end;
+          matchStage.check_in_time.$lte = end;
         }
       }
-
-      const populateQuery = {
-        path: 'user_id',
-        select: 'full_name email role avatar_url'
-      };
-
-      if (role && ['seller_staff', 'repository_staff'].includes(role)) {
-        populateQuery.match = { role };
+      if (Object.keys(matchStage).length > 0) {
+        pipeline.push({ $match: matchStage });
       }
 
-      const attendance = await StaffAttendance.find(query)
-        .populate(populateQuery)
-        .sort({ check_in_time: -1 });
+      // Lookup user
+      pipeline.push({
+        $lookup: {
+          from: 'users',
+          localField: 'user_id',
+          foreignField: '_id',
+          as: 'user_id'
+        }
+      });
 
-      // Filter out null user_id (in case user was deleted)
-      const filteredAttendance = attendance.filter(att => att.user_id);
+      // Unwind user (convert array to object)
+      pipeline.push({ $unwind: { path: '$user_id', preserveNullAndEmptyArrays: false } });
+
+      // Match by role and search
+      const userMatchStage = {};
+      if (role && ['seller_staff', 'repository_staff'].includes(role)) {
+        userMatchStage['user_id.role'] = role;
+      }
+      if (search && search.trim()) {
+        const searchRegex = new RegExp(search.trim(), 'i');
+        userMatchStage.$or = [
+          { 'user_id.full_name': searchRegex },
+          { 'user_id.email': searchRegex }
+        ];
+      }
+      if (Object.keys(userMatchStage).length > 0) {
+        pipeline.push({ $match: userMatchStage });
+      }
+
+      // Add facet for count and data
+      pipeline.push({
+        $facet: {
+          metadata: [{ $count: 'total' }],
+          data: [
+            { $sort: { check_in_time: -1 } },
+            { $skip: (page - 1) * limit },
+            { $limit: limit },
+            {
+              $project: {
+                check_in_time: 1,
+                check_out_time: 1,
+                check_in_face_match: 1,
+                check_out_face_match: 1,
+                status: 1,
+                user_id: {
+                  _id: 1,
+                  full_name: 1,
+                  email: 1,
+                  role: 1,
+                  avatar_url: 1
+                }
+              }
+            }
+          ]
+        }
+      });
+
+      const result = await StaffAttendance.aggregate(pipeline);
+      
+      const total = result[0]?.metadata[0]?.total || 0;
+      const attendance = result[0]?.data || [];
 
       return {
         success: true,
-        attendance: filteredAttendance
+        attendance: attendance,
+        pagination: {
+          total: total,
+          page: page,
+          limit: limit,
+          totalPages: Math.ceil(total / limit)
+        }
       };
     } catch (error) {
       throw error;
