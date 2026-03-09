@@ -217,7 +217,7 @@ exports.changeStatus = async (req, res) => {
  * Get smart replenishment suggestions based on AI analysis
  * GET /api/v1/batches/suggestions/smart
  * Query params: date_from, date_to, days_back
- * Returns intelligent recommendations for restocking based on previous overstocking experience
+ * Returns intelligent recommendations for restocking based on sales velocity and waste rate analysis
  */
 exports.getSmartSuggestions = async (req, res) => {
   try {
