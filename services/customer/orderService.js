@@ -4,7 +4,6 @@ const ProductBatch = require("../../models/ProductBatch");
 const ProductUnit = require("../../models/ProductUnit");
 const Product = require("../../models/Product");
 const User = require("../../models/User");
-const CartItem = require("../../models/CartItem");
 const { payos } = require("../../config/payment");
 const mongoose = require("mongoose");
 
@@ -51,12 +50,12 @@ class OrderService {
           .populate("unit_id");
 
         if (!productUnit) {
-          throw new Error(`Product unit not found: ${item.product_unit_id}`);
+          throw new Error(`Sản phẩm không có sẵn: ID ${item.product_unit_id}`);
         }
 
         if (!productUnit.unit_id) {
           throw new Error(
-            `Unit not found for product: ${productUnit.product_id.name}`,
+            `Đơn vị tính bị lỗi đối với sản phẩm: ${productUnit.product_id.name}`,
           );
         }
 
@@ -72,7 +71,7 @@ class OrderService {
 
         if (!batch) {
           throw new Error(
-            `Not enough stock for product: ${productUnit.product_id.name}`,
+            `Xin lỗi, sản phẩm ${productUnit.product_id.name} hiện tại đã hết hàng trong kho.`,
           );
         }
 
@@ -80,7 +79,7 @@ class OrderService {
         const batchItem = batch.items.find(
           (bItem) =>
             bItem.product_id.toString() ===
-              productUnit.product_id._id.toString() &&
+            productUnit.product_id._id.toString() &&
             bItem.unit_id.toString() === productUnit.unit_id._id.toString() &&
             bItem.current_quantity >= item.quantity &&
             bItem.status === "instock",
@@ -88,7 +87,7 @@ class OrderService {
 
         if (!batchItem) {
           throw new Error(
-            `No available batch item for product: ${productUnit.product_id.name}`,
+            `Xin lỗi! Sản phẩm "${productUnit.product_id.name}" không còn đủ ${item.quantity} phần trong lô hàng hiện tại. Bạn vui lòng giảm số lượng.`,
           );
         }
 
@@ -347,142 +346,65 @@ class OrderService {
     };
   }
 
-  // ==================== CART SEARCH/FILTER ====================
 
-  /**
-   * Search/filter cart items
-   * @param {String} userId - User ID
-   * @param {Object} filters - { search, category_id, min_price, max_price, sort_by }
-   */
-  async searchCartItems(userId, filters = {}) {
-    const {
-      search,
-      category_id,
-      min_price,
-      max_price,
-      sort_by = "newest",
-    } = filters;
+  // ==================== AUTO CRON PAYOS ====================
+  // Hàm quét tự động tìm mấy ông nội treo PayOS quá 15 phút
+  async autoCancelExpiredPayOSOrders() {
+    try {
+      // 1. Tạo cái mốc thời gian cách đây 15 phút
+      const timeoutDate = new Date(Date.now() - 15 * 60 * 1000);
 
-    // Get all cart items for user
-    const cartItems = await CartItem.find({ user_id: userId })
-      .populate({
-        path: "product_unit_id",
-        populate: [
-          {
-            path: "product_id",
-            populate: {
-              path: "category_id",
-              select: "name",
-            },
-          },
-          {
-            path: "unit_id",
-            select: "name",
-          },
-        ],
-      })
-      .lean();
-
-    // Transform cart items with full product info
-    let items = cartItems.map((item) => {
-      const productUnit = item.product_unit_id;
-      const product = productUnit?.product_id;
-      const category = product?.category_id;
-      const unit = productUnit?.unit_id;
-
-      return {
-        _id: item._id,
-        quantity: item.quantity,
-        product_unit_id: productUnit?._id,
-        product: {
-          _id: product?._id,
-          name: product?.name,
-          description: product?.description,
-          image_url: product?.image_url,
-          category_id: category?._id,
-          category_name: category?.name,
-        },
-        unit: {
-          _id: unit?._id,
-          name: unit?.name,
-        },
-        price: productUnit?.price || 0,
-        total_price: (productUnit?.price || 0) * item.quantity,
-        created_at: item.createdAt,
-      };
-    });
-
-    // Filter by search (product name or description)
-    if (search) {
-      const searchNormalized = removeVietnameseDiacritics(search);
-      items = items.filter((item) => {
-        const nameNormalized = removeVietnameseDiacritics(
-          item.product?.name || "",
-        );
-        const descNormalized = removeVietnameseDiacritics(
-          item.product?.description || "",
-        );
-        return (
-          nameNormalized.includes(searchNormalized) ||
-          descNormalized.includes(searchNormalized)
-        );
+      // 2. Lục tìm mấy đơn PayOS đang treo
+      const expiredOrders = await Order.find({
+        payment_method: "payos",
+        payment_status: "unpaid",
+        order_status: "pending",
+        created_at: { $lt: timeoutDate } // Lọc ngày rành rành cũ hơn 15phút
       });
-    }
 
-    // Filter by category
-    if (category_id) {
-      items = items.filter(
-        (item) => item.product?.category_id?.toString() === category_id,
-      );
-    }
+      if (expiredOrders.length === 0) return; // Không có rác thì quay đầu
 
-    // Filter by price range
-    if (min_price) {
-      items = items.filter((item) => item.price >= parseInt(min_price));
-    }
-    if (max_price) {
-      items = items.filter((item) => item.price <= parseInt(max_price));
-    }
+      // 3. Có rác thì lôi ra xử từng ông một
+      for (const order of expiredOrders) {
+        
+        // --- BƯỚC 3A: Đánh dấu đơn là ĐÃ HỦY do quá hạn ---
+        order.order_status = "cancelled";
+        // Ghi chú lý do hủy
+        order.cancellation_reason = "System timeout: Unpaid PayOS order";
+        await order.save();
 
-    // Sort items
-    switch (sort_by) {
-      case "name":
-        items.sort((a, b) =>
-          (a.product?.name || "").localeCompare(b.product?.name || ""),
-        );
-        break;
-      case "price-asc":
-        items.sort((a, b) => a.price - b.price);
-        break;
-      case "price-desc":
-        items.sort((a, b) => b.price - a.price);
-        break;
-      case "quantity-asc":
-        items.sort((a, b) => a.quantity - b.quantity);
-        break;
-      case "quantity-desc":
-        items.sort((a, b) => b.quantity - a.quantity);
-        break;
-      case "oldest":
-        items.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        break;
-      case "newest":
-      default:
-        items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        break;
+        // --- BƯỚC 3B: Moi lại cái hóa đơn chi tiết để coi hồi nãy trừ mấy món đồ ---
+        const details = await OrderDetail.find({ order_id: order._id }).populate("product_unit_id");
+
+        for (const item of details) {
+          if (!item.product_batch_id || !item.batch_item_id) continue;
+
+          // Cộng ngược đồ đạc về kho (ProductBatch)
+          await ProductBatch.updateOne(
+            {
+              _id: item.product_batch_id,
+              "items._id": item.batch_item_id
+            },
+            { $inc: { "items.$.current_quantity": item.quantity } } // Lệnh $inc để cộng số dương
+          );
+
+          // Nhớ cộng lại tổng hiển thị kho ảo (Product.total_stock)
+          const productUnit = item.product_unit_id;
+          if (productUnit && productUnit.product_id) {
+            const product = await Product.findById(productUnit.product_id);
+            if (product) {
+              const quantityInBaseUnit = item.quantity * (productUnit.exchange_value || 1);
+              product.total_stock = (product.total_stock || 0) + quantityInBaseUnit;
+              await product.save();
+            }
+          }
+        }
+        
+        console.log(`[Auto-Cron] Đã HỦY và NHẢ KHO cho đơn mồ côi: ${order.order_code}`);
+      }
+    } catch (error) {
+      console.error("[Auto-Cron] Lỗi khi chạy quét rác tự động:", error);
     }
-
-    // Calculate cart summary
-    const summary = {
-      total_items: items.length,
-      total_quantity: items.reduce((sum, item) => sum + item.quantity, 0),
-      total_amount: items.reduce((sum, item) => sum + item.total_price, 0),
-    };
-
-    return {
-      items,
-      summary,
-    };
   }
 }
 

@@ -28,6 +28,7 @@ const customerCouponRouter = require("./routes/customer/couponRouter");
 const customerUserCouponRouter = require("./routes/customer/userCouponRouter");
 const customerRecipeRouter = require("./routes/customer/recipeRouter");
 const customerOrderRouter = require("./routes/customer/orderRouter");
+const customerCartRouter = require("./routes/customer/cartRouter");
 
 var app = express();
 
@@ -43,6 +44,8 @@ app.use(
       "http://10.66.162.41:8081",
       "http://10.66.184.222:8081",
       "http://10.66.169.60:8081", // ✅ Current WiFi IP - Updated automatically
+      "http://192.168.1.5:8081",
+      "http://192.168.3.167:8081",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -73,6 +76,7 @@ app.use("/api/v1/customer/coupons", customerCouponRouter);
 app.use("/api/v1/customer/user-coupons", customerUserCouponRouter);
 app.use("/api/v1/customer/recipes", customerRecipeRouter);
 app.use("/api/v1/customer/orders", customerOrderRouter);
+app.use("/api/v1/customer/cart", customerCartRouter);
 
 // Admin routes (require admin role)
 app.use("/api/v1/product-units", productUnitRouter);
@@ -104,5 +108,14 @@ app.use(function (err, req, res, next) {
   res.status(err.status || 500);
   res.render("error");
 });
+
+// ==================== AUTO CRON PAYOS ====================
+const orderService = require("./services/customer/orderService");
+setInterval(
+  () => {
+    orderService.autoCancelExpiredPayOSOrders();
+  },
+  5 * 60 * 1000,
+); // Run every 5 minutes
 
 module.exports = app;
