@@ -40,7 +40,7 @@ const orderSchema = new mongoose.Schema(
     },
     payment_method: {
       type: String,
-      enum: ["cash", "momo", "card", "cod", "payos"],
+      enum: ["cash", "card", "cod", "payos"],
     },
     payos_order_code: {
       type: Number,
