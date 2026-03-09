@@ -47,6 +47,7 @@ app.use(
       "http://192.168.1.5:8081",
       "http://192.168.3.167:8081",
       "http://192.168.3.188:8081",
+      "exp://10.10.10.83:8081",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

@@ -1,4 +1,4 @@
-const { CartItem, ProductUnit, Product, RecipeIngredient, Recipe } = require("../../models");
+const { CartItem, ProductUnit, Product, RecipeIngredient, Recipe, ProductBatch } = require("../../models");
 
 class CartService {
   /**
@@ -55,14 +55,71 @@ class CartService {
       })
       .sort({ createdAt: -1 });
 
-    // Format response
-    return cartItems.map((item) => ({
-      ...item.toObject(),
-      // Add quick access fields for mobile easy rendering
-      product: item.product_unit_id.product_id,
-      productUnit: item.product_unit_id,
-      unit: item.product_unit_id.unit_id,
-    }));
+    // Enhance cart items with rescue pricing info
+    const enhancedItems = await Promise.all(
+      cartItems.map(async (item) => {
+        const productUnit = item.product_unit_id;
+        const product = productUnit?.product_id;
+        const unit = productUnit?.unit_id;
+
+        let rescuePricing = {
+          isAvailable: false,
+          originalPrice: productUnit?.price || 0,
+          discountPercentage: 0,
+          discountedPrice: productUnit?.price || 0,
+          savings: 0,
+        };
+
+        // Find available batch with rescue pricing
+        if (product && unit) {
+          const batch = await ProductBatch.findOne({
+            "items.product_id": product._id,
+            "items.unit_id": unit._id,
+            "items.current_quantity": { $gte: item.quantity },
+            "items.status": "onsale",
+            "items.rescue_pricing_active": true,
+            is_deleted: false,
+          }).sort({ created_at: 1 });
+
+          if (batch) {
+            const batchItem = batch.items.find(
+              (bItem) =>
+                bItem.product_id.toString() === product._id.toString() &&
+                bItem.unit_id.toString() === unit._id.toString() &&
+                bItem.current_quantity >= item.quantity &&
+                bItem.status === "onsale" &&
+                bItem.rescue_pricing_active &&
+                bItem.rescue_discount_percentage > 0
+            );
+
+            if (batchItem) {
+              const originalPrice = productUnit.price;
+              const discountedPrice = Math.round(originalPrice * (100 - batchItem.rescue_discount_percentage) / 100);
+              const savingsPerUnit = originalPrice - discountedPrice;
+              
+              rescuePricing = {
+                isAvailable: true,
+                originalPrice: originalPrice,
+                discountPercentage: batchItem.rescue_discount_percentage,
+                discountedPrice: discountedPrice,
+                savings: savingsPerUnit * item.quantity,
+              };
+            }
+          }
+        }
+
+        return {
+          ...item.toObject(),
+          // Add quick access fields for mobile easy rendering
+          product,
+          productUnit,
+          unit,
+          rescuePricing,
+        };
+      })
+    );
+
+    return enhancedItems;
   }
 
   /**

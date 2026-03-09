@@ -1,4 +1,4 @@
-const { Product, Category, ProductUnit, Unit } = require("../../models");
+const { Product, Category, ProductUnit, Unit, ProductBatch } = require("../../models");
 
 const productService = {
   /**
@@ -65,6 +65,31 @@ const productService = {
         } else {
           product.min_price = 0;
           product.max_price = 0;
+        }
+
+        // Check for rescue pricing - find max discount available for this product
+        product.maxRescueDiscount = 0;
+        try {
+          const batches = await ProductBatch.find({
+            "items.product_id": product._id,
+            "items.rescue_pricing_active": true,
+            "items.status": "onsale",
+            is_deleted: false,
+          }).lean();
+
+          for (let batch of batches) {
+            for (let item of batch.items) {
+              if (
+                item.product_id.toString() === product._id.toString() &&
+                item.rescue_pricing_active &&
+                item.rescue_discount_percentage > product.maxRescueDiscount
+              ) {
+                product.maxRescueDiscount = item.rescue_discount_percentage;
+              }
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching rescue pricing:", err);
         }
       }
 
@@ -145,9 +170,7 @@ const productService = {
         .populate("unit_id", "name")
         .lean();
 
-      // Calculate available stock for each unit from ProductBatch
-      const ProductBatch = require("../../models/ProductBatch");
-
+      // Calculate available stock and rescue pricing for each unit
       for (let unit of units) {
         // Find all batches that have this product + unit combination with stock
         const batches = await ProductBatch.find({
@@ -157,8 +180,10 @@ const productService = {
           is_deleted: false,
         }).lean();
 
-        // Sum up current_quantity from all matching batch items
+        // Sum up current_quantity and find max rescue discount
         let totalStock = 0;
+        let maxRescueDiscount = 0;
+        
         for (let batch of batches) {
           for (let item of batch.items) {
             if (
@@ -167,11 +192,17 @@ const productService = {
               item.status === "onsale"
             ) {
               totalStock += item.current_quantity;
+              
+              // Check rescue pricing
+              if (item.rescue_pricing_active && item.rescue_discount_percentage > maxRescueDiscount) {
+                maxRescueDiscount = item.rescue_discount_percentage;
+              }
             }
           }
         }
 
         unit.available_stock = totalStock;
+        unit.maxRescueDiscount = maxRescueDiscount;
       }
 
       product.units = units;
@@ -181,6 +212,9 @@ const productService = {
         (sum, unit) => sum + (unit.available_stock || 0),
         0,
       );
+
+      // Get max rescue discount across all units
+      product.maxRescueDiscount = Math.max(...units.map(u => u.maxRescueDiscount || 0), 0);
 
       return {
         success: true,
