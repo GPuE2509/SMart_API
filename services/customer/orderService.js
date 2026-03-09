@@ -65,7 +65,7 @@ class OrderService {
           "items.product_id": productUnit.product_id._id,
           "items.unit_id": productUnit.unit_id._id,
           "items.current_quantity": { $gte: item.quantity },
-          "items.status": "instock",
+          "items.status": "onsale",
           is_deleted: false,
         }).sort({ created_at: 1 });
 
@@ -79,10 +79,10 @@ class OrderService {
         const batchItem = batch.items.find(
           (bItem) =>
             bItem.product_id.toString() ===
-            productUnit.product_id._id.toString() &&
+              productUnit.product_id._id.toString() &&
             bItem.unit_id.toString() === productUnit.unit_id._id.toString() &&
             bItem.current_quantity >= item.quantity &&
-            bItem.status === "instock",
+            bItem.status === "onsale",
         );
 
         if (!batchItem) {
@@ -231,36 +231,6 @@ class OrderService {
     }
   }
 
-  // Verify PayOS payment via webhook
-  async verifyPayOSWebhook(webhookData) {
-    try {
-      const { orderCode, amount, description, code, id } = webhookData;
-
-      // Get payment info from PayOS
-      const paymentInfo = await payos.paymentRequests.get(id);
-
-      if (paymentInfo.status === "PAID") {
-        // Find order by PayOS orderCode
-        const order = await Order.findOne({ payos_order_code: orderCode });
-
-        if (!order) {
-          throw new Error("Order not found");
-        }
-
-        // Update order status
-        order.payment_status = "paid";
-        order.order_status = "processing";
-        await order.save();
-
-        return order;
-      }
-
-      return null;
-    } catch (error) {
-      throw error;
-    }
-  }
-
   // Get order by ID
   async getOrderById(orderId, userId) {
     const order = await Order.findOne({ _id: orderId, user_id: userId })
@@ -346,7 +316,6 @@ class OrderService {
     };
   }
 
-
   // ==================== AUTO CRON PAYOS ====================
   // Hàm quét tự động tìm mấy ông nội treo PayOS quá 15 phút
   async autoCancelExpiredPayOSOrders() {
@@ -359,22 +328,51 @@ class OrderService {
         payment_method: "payos",
         payment_status: "unpaid",
         order_status: "pending",
-        created_at: { $lt: timeoutDate } // Lọc ngày rành rành cũ hơn 15phút
+        created_at: { $lt: timeoutDate }, // Lọc ngày rành rành cũ hơn 15phút
       });
 
       if (expiredOrders.length === 0) return; // Không có rác thì quay đầu
 
       // 3. Có rác thì lôi ra xử từng ông một
       for (const order of expiredOrders) {
-        
-        // --- BƯỚC 3A: Đánh dấu đơn là ĐÃ HỦY do quá hạn ---
+        // --- BƯỚC 3A: KIỂM TRA VỚI PAYOS TRƯỚC KHI CANCEL ---
+        let paymentStatus = "PENDING"; // Mặc định chưa thanh toán
+
+        try {
+          // Gọi API PayOS để kiểm tra trạng thái thực tế
+          if (order.payos_order_code) {
+            const paymentInfo = await payos.paymentRequests.get(
+              order.payos_order_code,
+            );
+            paymentStatus = paymentInfo.status; // PAID, PENDING, CANCELLED
+
+            // Nếu đã thanh toán trên PayOS → CẬP NHẬT thay vì cancel
+            if (paymentStatus === "PAID") {
+              order.payment_status = "paid";
+              order.order_status = "processing";
+              await order.save();
+              continue; // Bỏ qua, không cancel
+            }
+          }
+        } catch (payosError) {
+          // Nếu lỗi khi gọi PayOS API (network, invalid order code...),
+          // vẫn tiếp tục cancel để tránh đơn treo mãi
+          console.error(
+            `[Auto-Cron] ⚠️ Lỗi kiểm tra PayOS cho đơn ${order.order_code}:`,
+            payosError.message,
+          );
+        }
+
+        // --- BƯỚC 3B: Nếu PayOS trả về PENDING/CANCELLED hoặc lỗi → Cancel đơn ---
         order.order_status = "cancelled";
         // Ghi chú lý do hủy
         order.cancellation_reason = "System timeout: Unpaid PayOS order";
         await order.save();
 
-        // --- BƯỚC 3B: Moi lại cái hóa đơn chi tiết để coi hồi nãy trừ mấy món đồ ---
-        const details = await OrderDetail.find({ order_id: order._id }).populate("product_unit_id");
+        // --- BƯỚC 3C: Moi lại cái hóa đơn chi tiết để coi hồi nãy trừ mấy món đồ ---
+        const details = await OrderDetail.find({
+          order_id: order._id,
+        }).populate("product_unit_id");
 
         for (const item of details) {
           if (!item.product_batch_id || !item.batch_item_id) continue;
@@ -383,9 +381,9 @@ class OrderService {
           await ProductBatch.updateOne(
             {
               _id: item.product_batch_id,
-              "items._id": item.batch_item_id
+              "items._id": item.batch_item_id,
             },
-            { $inc: { "items.$.current_quantity": item.quantity } } // Lệnh $inc để cộng số dương
+            { $inc: { "items.$.current_quantity": item.quantity } }, // Lệnh $inc để cộng số dương
           );
 
           // Nhớ cộng lại tổng hiển thị kho ảo (Product.total_stock)
@@ -393,14 +391,18 @@ class OrderService {
           if (productUnit && productUnit.product_id) {
             const product = await Product.findById(productUnit.product_id);
             if (product) {
-              const quantityInBaseUnit = item.quantity * (productUnit.exchange_value || 1);
-              product.total_stock = (product.total_stock || 0) + quantityInBaseUnit;
+              const quantityInBaseUnit =
+                item.quantity * (productUnit.exchange_value || 1);
+              product.total_stock =
+                (product.total_stock || 0) + quantityInBaseUnit;
               await product.save();
             }
           }
         }
-        
-        console.log(`[Auto-Cron] Đã HỦY và NHẢ KHO cho đơn mồ côi: ${order.order_code}`);
+
+        console.log(
+          `[Auto-Cron] ❌ Đã HỦY và NHẢ KHO cho đơn mồ côi: ${order.order_code}`,
+        );
       }
     } catch (error) {
       console.error("[Auto-Cron] Lỗi khi chạy quét rác tự động:", error);
