@@ -885,19 +885,130 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
     data.waste_rate = data.total_imported > 0 ? totalWaste / data.total_imported : 0;
   });
 
-  // Filter products with high waste rates or current stock issues
-  const problematicProducts = Object.values(productAnalysis).filter(
-    (p) => p.waste_rate > 0.05 || p.total_expired > 0 || p.total_outdate > 0,
-  );
+  // ===== NEW: Analyze sales data to identify best-selling products =====
+  const OrderDetail = require("../../models/OrderDetail");
+  const ProductUnit = require("../../models/ProductUnit");
+  
+  // Build order query based on date range
+  const orderQuery = {};
+  if (dateRange.created_at) {
+    orderQuery.createdAt = dateRange.created_at;
+  }
+  
+  // Get all order details within date range
+  const orderDetails = await OrderDetail.find(orderQuery)
+    .populate({
+      path: "product_unit_id",
+      select: "product_id exchange_value",
+      populate: {
+        path: "product_id",
+        select: "name total_stock category_id"
+      }
+    })
+    .lean();
+
+  // Analyze sales by product
+  const salesAnalysis = {};
+  
+  orderDetails.forEach((detail) => {
+    if (!detail.product_unit_id || !detail.product_unit_id.product_id) return;
+    
+    const product = detail.product_unit_id.product_id;
+    const productId = product._id.toString();
+    const productName = product.name;
+    
+    // Convert quantity to base unit
+    const baseQuantity = detail.quantity * (detail.product_unit_id.exchange_value || 1);
+    
+    if (!salesAnalysis[productId]) {
+      salesAnalysis[productId] = {
+        product_id: productId,
+        product_name: productName,
+        total_stock: product.total_stock || 0,
+        total_sold: 0,
+        order_count: 0,
+        revenue: 0,
+        sales_history: []
+      };
+    }
+    
+    salesAnalysis[productId].total_sold += baseQuantity;
+    salesAnalysis[productId].order_count += 1;
+    salesAnalysis[productId].revenue += detail.total_price || 0;
+    salesAnalysis[productId].sales_history.push({
+      date: detail.createdAt,
+      quantity: baseQuantity,
+      price: detail.unit_price
+    });
+  });
+
+  // Calculate sales velocity (units per day)
+  const daysAnalyzed = options.days_back || 90;
+  Object.keys(salesAnalysis).forEach((productId) => {
+    const data = salesAnalysis[productId];
+    data.sales_velocity = data.total_sold / daysAnalyzed; // units per day
+    data.turnover_rate = data.total_stock > 0 ? data.total_sold / data.total_stock : 0;
+  });
+
+  // Combine sales analysis with waste analysis
+  const combinedAnalysis = {};
+  
+  // Add all products from sales analysis
+  Object.keys(salesAnalysis).forEach((productId) => {
+    combinedAnalysis[productId] = {
+      ...salesAnalysis[productId],
+      waste_rate: productAnalysis[productId]?.waste_rate || 0,
+      total_expired: productAnalysis[productId]?.total_expired || 0,
+      total_rejected: productAnalysis[productId]?.total_rejected || 0,
+      total_imported: productAnalysis[productId]?.total_imported || 0,
+    };
+  });
+  
+  // Add products that only have waste data (not sold but have stock issues)
+  Object.keys(productAnalysis).forEach((productId) => {
+    if (!combinedAnalysis[productId]) {
+      combinedAnalysis[productId] = {
+        ...productAnalysis[productId],
+        total_sold: 0,
+        order_count: 0,
+        revenue: 0,
+        sales_velocity: 0,
+        turnover_rate: 0
+      };
+    }
+  });
+
+  // Convert to array and sort by priority (high sales velocity and low waste rate first)
+  const productsForAnalysis = Object.values(combinedAnalysis).sort((a, b) => {
+    // Priority: high sales velocity + low waste rate
+    const scoreA = a.sales_velocity * (1 - a.waste_rate);
+    const scoreB = b.sales_velocity * (1 - b.waste_rate);
+    return scoreB - scoreA;
+  });
 
   // Prepare data for AI analysis
-  const aiPrompt = `Bạn là một chuyên gia quản lý kho hàng. Phân tích dữ liệu lịch sử nhập hàng và đưa ra gợi ý thông minh về số lượng nên nhập cho từng sản phẩm để tránh tình trạng nhập hàng quá mức (overstocking).
+  const aiPrompt = `Bạn là một chuyên gia quản lý kho hàng. Phân tích dữ liệu lịch sử bán hàng và nhập hàng để đưa ra gợi ý thông minh về số lượng nên nhập cho từng sản phẩm.
 
-Dữ liệu lịch sử:
-${JSON.stringify(problematicProducts, null, 2)}
+Dữ liệu sản phẩm (đã sắp xếp theo độ ưu tiên - sản phẩm bán chạy + ít hao hụt):
+${JSON.stringify(productsForAnalysis.slice(0, 50), null, 2)}
 
 Dữ liệu phụ (logs về hàng hỏng/hết hạn):
 ${JSON.stringify(inventoryLogs.slice(0, 20), null, 2)}
+
+YÊU CẦU PHÂN TÍCH:
+1. SẢN PHẨM BÁN CHẠY (sales_velocity cao):
+   - Nếu total_stock THẤP (<= sales_velocity * 7 ngày): Gợi ý nhập NHIỀU để đảm bảo không thiếu hàng
+   - Nếu total_stock VỪA PHẢI: Gợi ý nhập số lượng ổn định theo sales_velocity
+   - Tính recommended_quantity = sales_velocity * số_ngày_dự_trữ (thường 14-30 ngày)
+
+2. SẢN PHẨM BÁN ÍT (sales_velocity thấp hoặc = 0):
+   - Nếu waste_rate CAO (>10%): Gợi ý KHÔNG NHẬP hoặc nhập RẤT ÍT
+   - Nếu total_stock CAO: Gợi ý chờ tiêu thụ hết trước khi nhập
+   - Cảnh báo nếu sản phẩm có nhiều lô hết hạn/reject
+
+3. SẢN PHẨM CÓ VỪA BÁN VỪA HẠO HỤT:
+   - Cân nhắc giữa sales_velocity và waste_rate
+   - Đề xuất điều chỉnh quy mô nhập để giảm hao hụt nhưng đủ cung ứng
 
 Hãy đưa ra gợi ý dưới dạng JSON với cấu trúc sau:
 {
@@ -906,31 +1017,42 @@ Hãy đưa ra gợi ý dưới dạng JSON với cấu trúc sau:
       "product_id": "id_sản_phẩm",
       "product_name": "tên_sản_phẩm",
       "current_stock": số_lượng_hiện_tại,
+      "sales_velocity": tốc_độ_bán_đơn_vị_ngày,
+      "total_sold": tổng_số_đã_bán,
       "recommended_quantity": số_lượng_nên_nhập,
-      "reasoning": "lý_do_chi_tiết",
+      "reasoning": "lý_do_chi_tiết_dựa_trên_cả_sales_và_waste",
       "waste_rate": tỷ_lệ_hao_hụt,
       "priority": "high" | "medium" | "low",
+      "action": "increase" | "maintain" | "decrease" | "stop",
       "warning": "cảnh_báo_nếu_có"
     }
   ],
   "overall_analysis": {
     "total_waste_value_estimate": giá_trị_ước_tính_hao_hụt,
     "key_insights": ["insight1", "insight2", "insight3"],
-    "best_practices": ["practice1", "practice2"]
+    "best_practices": ["practice1", "practice2"],
+    "top_selling_products": ["product1", "product2", "product3"],
+    "products_to_avoid": ["product1", "product2"]
   }
 }
 
-Lưu ý:
-- Nếu waste_rate > 20%: priority = "high" và khuyến nghị giảm số lượng nhập
-- Nếu waste_rate 10-20%: priority = "medium" và điều chỉnh vừa phải
-- Nếu waste_rate < 10%: priority = "low"
-- Xem xét total_stock hiện tại để đưa ra khuyến nghị phù hợp
-- Đưa ra số lượng cụ thể, không chỉ nói "giảm" hay "tăng"
-- Chỉ trả về JSON, không có text thừa
+NGUYÊN TẮC ƯU TIÊN:
+- priority = "high": Sản phẩm bán chạy + stock thấp (cần nhập gấp) HOẶC sản phẩm waste rate cao (cần xử lý gấp)
+- priority = "medium": Sản phẩm bán ổn định cần nhập bổ sung
+- priority = "low": Sản phẩm bán ít hoặc stock đủ
+
+- action = "increase": Nhập nhiều hơn trước (sản phẩm bán chạy)
+- action = "maintain": Duy trì mức nhập như hiện tại
+- action = "decrease": Giảm số lượng nhập (waste rate cao hoặc bán chậm)
+- action = "stop": Tạm ngưng nhập (stock cao + bán ít + waste cao)
+
+Chỉ trả về JSON, không có text thừa.
 
 Khoảng thời gian phân tích: ${dateRange.created_at ? `Từ ${new Date(dateRange.created_at.$gte).toLocaleDateString('vi-VN')} đến ${dateRange.created_at.$lte ? new Date(dateRange.created_at.$lte).toLocaleDateString('vi-VN') : 'hiện tại'}` : 'Toàn bộ lịch sử'}
+Số ngày phân tích: ${daysAnalyzed}
 Số lô hàng phân tích: ${allBatches.length}
-Số log phân tích: ${inventoryLogs.length}`;
+Số đơn hàng phân tích: ${orderDetails.length}
+Số sản phẩm phân tích: ${productsForAnalysis.length}`;
 
   try {
     const aiResponse = await generateJSONContent(aiPrompt);
@@ -940,16 +1062,41 @@ Số log phân tích: ${inventoryLogs.length}`;
       data: {
         suggestions: aiResponse.suggestions || [],
         analysis: aiResponse.overall_analysis || {},
-        product_analysis: problematicProducts,
+        product_analysis: productsForAnalysis,
+        sales_summary: {
+          total_products_sold: Object.keys(salesAnalysis).length,
+          total_orders: orderDetails.length,
+          top_sellers: Object.values(salesAnalysis)
+            .sort((a, b) => b.sales_velocity - a.sales_velocity)
+            .slice(0, 10)
+            .map(p => ({
+              product_name: p.product_name,
+              total_sold: p.total_sold,
+              sales_velocity: p.sales_velocity.toFixed(2),
+              current_stock: p.total_stock
+            }))
+        },
+        waste_summary: {
+          total_products_with_waste: Object.values(productAnalysis).filter(p => p.waste_rate > 0).length,
+          high_waste_products: Object.values(productAnalysis)
+            .filter(p => p.waste_rate > 0.1)
+            .map(p => ({
+              product_name: p.product_name,
+              waste_rate: (p.waste_rate * 100).toFixed(1) + '%',
+              total_expired: p.total_expired,
+              total_rejected: p.total_rejected
+            }))
+        },
         date_range: {
           from: dateRange.created_at?.$gte || null,
           to: dateRange.created_at?.$lte || null,
-          days_analyzed: options.days_back || 90,
+          days_analyzed: daysAnalyzed,
         },
         stats: {
           total_batches: allBatches.length,
           total_logs: inventoryLogs.length,
-          products_analyzed: problematicProducts.length,
+          total_orders: orderDetails.length,
+          products_analyzed: productsForAnalysis.length,
         },
         timestamp: new Date(),
       },
@@ -958,23 +1105,70 @@ Số log phân tích: ${inventoryLogs.length}`;
     console.error("Error getting AI suggestions:", error);
 
     // Fallback to rule-based suggestions if AI fails
-    const fallbackSuggestions = problematicProducts.map((p) => ({
-      product_id: p.product_id,
-      product_name: p.product_name,
-      current_stock: p.total_stock,
-      recommended_quantity: Math.max(
-        0,
-        Math.floor(p.total_imported * (1 - p.waste_rate) * 0.5),
-      ),
-      reasoning: `Dựa trên tỷ lệ hao hụt ${(p.waste_rate * 100).toFixed(1)}%, khuyến nghị giảm số lượng nhập để tránh tồn kho`,
-      waste_rate: p.waste_rate,
-      priority:
-        p.waste_rate > 0.2 ? "high" : p.waste_rate > 0.1 ? "medium" : "low",
-      warning:
-        p.waste_rate > 0.2
-          ? "Sản phẩm có tỷ lệ hao hụt cao, cần xem xét lại chiến lược nhập hàng"
-          : null,
-    }));
+    const fallbackSuggestions = productsForAnalysis.slice(0, 30).map((p) => {
+      // Calculate recommended quantity based on sales velocity
+      let recommendedQty = 0;
+      let action = "maintain";
+      let priority = "low";
+      let reasoning = "";
+
+      if (p.sales_velocity > 0) {
+        // Product is selling
+        const daysOfStock = p.total_stock > 0 ? p.total_stock / p.sales_velocity : 0;
+        
+        if (daysOfStock < 7) {
+          // Low stock, high priority
+          recommendedQty = Math.ceil(p.sales_velocity * 21); // 3 weeks supply
+          action = "increase";
+          priority = "high";
+          reasoning = `Sản phẩm bán chạy (${p.sales_velocity.toFixed(1)} đơn vị/ngày) và tồn kho thấp (chỉ đủ ${daysOfStock.toFixed(0)} ngày). Cần nhập gấp để tránh thiếu hàng.`;
+        } else if (daysOfStock < 14) {
+          recommendedQty = Math.ceil(p.sales_velocity * 14); // 2 weeks supply
+          action = "maintain";
+          priority = "medium";
+          reasoning = `Sản phẩm bán ổn định (${p.sales_velocity.toFixed(1)} đơn vị/ngày), tồn kho đủ ${daysOfStock.toFixed(0)} ngày. Nhập bổ sung để duy trì mức tồn kho an toàn.`;
+        } else {
+          recommendedQty = Math.ceil(p.sales_velocity * 7); // 1 week supply
+          action = "maintain";
+          priority = "low";
+          reasoning = `Tồn kho hiện tại đủ ${daysOfStock.toFixed(0)} ngày. Nhập ít để duy trì.`;
+        }
+
+        // Adjust for high waste rate
+        if (p.waste_rate > 0.1) {
+          recommendedQty = Math.floor(recommendedQty * 0.7); // Reduce by 30%
+          reasoning += ` Lưu ý: Tỷ lệ hao hụt cao (${(p.waste_rate * 100).toFixed(1)}%), đã giảm số lượng nhập.`;
+          priority = p.waste_rate > 0.2 ? "high" : priority;
+        }
+      } else {
+        // Product not selling
+        if (p.waste_rate > 0.1 || p.total_stock > 0) {
+          recommendedQty = 0;
+          action = "stop";
+          priority = p.waste_rate > 0.2 ? "high" : "medium";
+          reasoning = `Sản phẩm không có doanh số trong ${daysAnalyzed} ngày qua. Tỷ lệ hao hụt ${(p.waste_rate * 100).toFixed(1)}%. Nên tạm ngưng nhập và xử lý tồn kho hiện tại.`;
+        } else {
+          recommendedQty = 0;
+          action = "stop";
+          priority = "low";
+          reasoning = `Sản phẩm không có doanh số. Tạm ngưng nhập cho đến khi có nhu cầu.`;
+        }
+      }
+
+      return {
+        product_id: p.product_id,
+        product_name: p.product_name,
+        current_stock: p.total_stock,
+        sales_velocity: p.sales_velocity,
+        total_sold: p.total_sold || 0,
+        recommended_quantity: Math.max(0, recommendedQty),
+        reasoning: reasoning,
+        waste_rate: p.waste_rate,
+        priority: priority,
+        action: action,
+        warning: p.waste_rate > 0.2 ? "Sản phẩm có tỷ lệ hao hụt rất cao, cần xem xét lại chiến lược nhập hàng" : null,
+      };
+    });
 
     return {
       success: true,
@@ -984,22 +1178,59 @@ Số log phân tích: ${inventoryLogs.length}`;
           total_waste_value_estimate: 0,
           key_insights: [
             "AI tạm thời không khả dụng, sử dụng gợi ý dựa trên quy tắc",
+            `Phân tích ${productsForAnalysis.length} sản phẩm dựa trên dữ liệu bán hàng và tồn kho`,
+            `${Object.keys(salesAnalysis).length} sản phẩm có doanh số trong ${daysAnalyzed} ngày qua`
           ],
           best_practices: [
+            "Ưu tiên nhập hàng cho sản phẩm bán chạy với tồn kho thấp",
+            "Giảm hoặc ngưng nhập sản phẩm có tỷ lệ hao hụt cao",
             "Theo dõi hạn sử dụng sản phẩm thường xuyên",
-            "Nhập hàng dựa trên dự báo nhu cầu thực tế",
+            "Nhập hàng dựa trên tốc độ bán thực tế, không nhập quá mức"
           ],
+          top_selling_products: Object.values(salesAnalysis)
+            .sort((a, b) => b.sales_velocity - a.sales_velocity)
+            .slice(0, 5)
+            .map(p => p.product_name),
+          products_to_avoid: Object.values(productAnalysis)
+            .filter(p => p.waste_rate > 0.2)
+            .slice(0, 5)
+            .map(p => p.product_name)
         },
-        product_analysis: problematicProducts,
+        product_analysis: productsForAnalysis,
+        sales_summary: {
+          total_products_sold: Object.keys(salesAnalysis).length,
+          total_orders: orderDetails.length,
+          top_sellers: Object.values(salesAnalysis)
+            .sort((a, b) => b.sales_velocity - a.sales_velocity)
+            .slice(0, 10)
+            .map(p => ({
+              product_name: p.product_name,
+              total_sold: p.total_sold,
+              sales_velocity: p.sales_velocity.toFixed(2),
+              current_stock: p.total_stock
+            }))
+        },
+        waste_summary: {
+          total_products_with_waste: Object.values(productAnalysis).filter(p => p.waste_rate > 0).length,
+          high_waste_products: Object.values(productAnalysis)
+            .filter(p => p.waste_rate > 0.1)
+            .map(p => ({
+              product_name: p.product_name,
+              waste_rate: (p.waste_rate * 100).toFixed(1) + '%',
+              total_expired: p.total_expired,
+              total_rejected: p.total_rejected
+            }))
+        },
         date_range: {
           from: dateRange.created_at?.$gte || null,
           to: dateRange.created_at?.$lte || null,
-          days_analyzed: options.days_back || 90,
+          days_analyzed: daysAnalyzed,
         },
         stats: {
           total_batches: allBatches.length,
           total_logs: inventoryLogs.length,
-          products_analyzed: problematicProducts.length,
+          total_orders: orderDetails.length,
+          products_analyzed: productsForAnalysis.length,
         },
         timestamp: new Date(),
         fallback: true,
