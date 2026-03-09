@@ -2,6 +2,8 @@ const Order = require("../../models/Order");
 const OrderDetail = require("../../models/OrderDetail");
 const Product = require("../../models/Product");
 const ProductUnit = require("../../models/ProductUnit");
+const InventoryLog = require("../../models/InventoryLog");
+const ProductBatch = require("../../models/ProductBatch");
 const mongoose = require("mongoose");
 
 /**
@@ -428,5 +430,102 @@ exports.getSalesSummary = async (filters) => {
     },
     order_type_breakdown: orderTypeBreakdown,
     payment_method_breakdown: paymentMethodBreakdown,
+  };
+};
+
+/**
+ * Get Rescue Efficiency Report (theo mô tả chức năng)
+ *
+ * 1. Recovered revenue: amount earned from selling discounted goods (Salvage Value)
+ *    = Tổng doanh thu từ OrderDetail có is_rescue_pricing = true (đơn đã thanh toán, completed/processing).
+ *
+ * 2. Loss of cost: Cost of goods that were destroyed.
+ *    = Tổng chi phí (số lượng × giá nhập) từ InventoryLog reason_type: expired_disposal, damaged, batch_rejection.
+ *
+ * 3. Successful rescue rate: (Quantity sold at discounted price / Total quantity nearing expiry) * 100%
+ *    - Quantity sold at discounted price = tổng quantity OrderDetail (rescue) trong kỳ.
+ *    - Total quantity nearing expiry (trong kỳ) = quantity sold at discount + quantity destroyed
+ *      (lượng gần hết hạn đã có kết quả: bán giảm giá hoặc hủy).
+ *
+ * @param {Object} filters - { start_date, end_date }
+ * @returns {Object} recovered_revenue, loss_of_cost, quantity_sold_at_discount, quantity_destroyed, total_quantity_nearing_expiry, successful_rescue_rate
+ */
+exports.getRescueEfficiencyReport = async (filters) => {
+  const { start_date, end_date } = filters;
+
+  const endDate = end_date ? new Date(end_date) : new Date();
+  const startDate = start_date
+    ? new Date(start_date)
+    : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  endDate.setHours(23, 59, 59, 999);
+  startDate.setHours(0, 0, 0, 0);
+
+  // 1) Recovered revenue & quantity sold at discounted price (from OrderDetail where is_rescue_pricing)
+  const completedOrderIds = await Order.find({
+    created_at: { $gte: startDate, $lte: endDate },
+    order_status: { $in: ["completed", "processing"] },
+    payment_status: "paid",
+  })
+    .select("_id")
+    .lean();
+
+  const orderIds = completedOrderIds.map((o) => o._id);
+
+  const rescueSales = await OrderDetail.aggregate([
+    { $match: { order_id: { $in: orderIds }, is_rescue_pricing: true } },
+    {
+      $group: {
+        _id: null,
+        recovered_revenue: { $sum: "$total_price" },
+        quantity_sold_at_discount: { $sum: "$quantity" },
+      },
+    },
+  ]);
+
+  const recoveredRevenue = rescueSales[0]?.recovered_revenue ?? 0;
+  const quantitySoldAtDiscount = rescueSales[0]?.quantity_sold_at_discount ?? 0;
+
+  // 2) Loss of cost & quantity destroyed (from InventoryLog: expired_disposal, damaged, batch_rejection)
+  const disposalLogs = await InventoryLog.find({
+    created_at: { $gte: startDate, $lte: endDate },
+    reason_type: { $in: ["expired_disposal", "damaged", "batch_rejection"] },
+  })
+    .select("product_batch_id batch_item_id quantity_change")
+    .lean();
+
+  let lossOfCost = 0;
+  let quantityDestroyed = 0;
+
+  for (const log of disposalLogs) {
+    const qty = Math.abs(log.quantity_change);
+    quantityDestroyed += qty;
+
+    const batch = await ProductBatch.findById(log.product_batch_id).lean();
+    if (!batch || !batch.items) continue;
+
+    const item = batch.items.find(
+      (i) => i._id && i._id.toString() === (log.batch_item_id || "").toString(),
+    );
+    const importPrice = item?.import_price ?? 0;
+    lossOfCost += qty * importPrice;
+  }
+
+  // 3) Successful rescue rate: (quantity_sold_at_discount / total_nearing_expiry) * 100
+  const totalNearingExpiry = quantitySoldAtDiscount + quantityDestroyed;
+  const successfulRescueRate =
+    totalNearingExpiry > 0
+      ? Math.round((quantitySoldAtDiscount / totalNearingExpiry) * 1000) / 10
+      : 0;
+
+  return {
+    start_date: startDate,
+    end_date: endDate,
+    recovered_revenue: recoveredRevenue,
+    loss_of_cost: lossOfCost,
+    quantity_sold_at_discount: quantitySoldAtDiscount,
+    quantity_destroyed: quantityDestroyed,
+    total_quantity_nearing_expiry: totalNearingExpiry,
+    successful_rescue_rate: successfulRescueRate,
   };
 };
