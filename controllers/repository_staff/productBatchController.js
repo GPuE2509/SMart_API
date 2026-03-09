@@ -211,3 +211,35 @@ exports.changeStatus = async (req, res) => {
     });
   }
 };
+
+/**
+ * Get smart replenishment suggestions based on AI analysis
+ * GET /api/v1/batches/suggestions/smart
+ * Query params: date_from, date_to, days_back
+ * Returns intelligent recommendations for restocking based on previous overstocking experience
+ */
+exports.getSmartSuggestions = async (req, res) => {
+  try {
+    const { date_from, date_to, days_back } = req.query;
+    
+    const options = {};
+    if (date_from) options.date_from = date_from;
+    if (date_to) options.date_to = date_to;
+    if (days_back) options.days_back = days_back;
+
+    const result =
+      await productBatchService.getSmartReplenishmentSuggestions(options);
+
+    res.status(200).json({
+      success: true,
+      message: "Lấy gợi ý nhập hàng thông minh thành công",
+      data: result.data,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Không thể lấy gợi ý nhập hàng",
+      error: error.message,
+    });
+  }
+};

@@ -6,6 +6,14 @@ const {
   authorizeRoles,
 } = require("../../middleware/authMiddleware");
 
+// Get smart replenishment suggestions (must be before /:id routes)
+router.get(
+  "/suggestions/smart",
+  authenticateUser,
+  authorizeRoles("repository_staff"),
+  productBatchController.getSmartSuggestions,
+);
+
 // Get all batches with filters and pagination
 router.get(
   "/",
