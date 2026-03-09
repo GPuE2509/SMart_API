@@ -27,5 +27,13 @@ router.post(
   userCouponController.purchase,
 );
 
+// Validate a coupon for checkout
+router.post(
+  "/validate",
+  authenticateUser,
+  authorizeRoles("customer"),
+  userCouponController.validateCoupon,
+);
+
 module.exports = router;
 
