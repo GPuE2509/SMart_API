@@ -9,6 +9,7 @@ var debug = require('debug')('cainayhuylam:server');
 var http = require('http');
 const connectDB = require('../config/database');
 const { initSocket } = require('../services/socketService');
+const { initScheduledJobs } = require('../config/scheduler');
 
 /**
  * Get port from environment and store in Express.
@@ -35,6 +36,9 @@ connectDB().then(() => {
   // Initialize Socket.IO
   initSocket(server);
   console.log('🔌 Socket.IO initialized');
+  
+  // Initialize scheduled jobs
+  initScheduledJobs();
 }).catch((err) => {
   console.error('Failed to connect to database:', err);
   process.exit(1);
