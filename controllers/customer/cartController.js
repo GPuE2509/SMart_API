@@ -99,6 +99,30 @@ class CartController {
     }
   }
 
+  async addRecipeToCart(req, res) {
+    try {
+      const userId = req.user.id;
+      const { recipeId } = req.body;
+
+      if (!recipeId) {
+        return res.status(400).json({
+          success: false,
+          message: "Vui lòng chọn công thức",
+        });
+      }
+
+      const result = await cartService.addRecipeToCart(userId, recipeId);
+
+      res.status(200).json(result);
+    } catch (error) {
+      console.error("Add recipe to cart error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Thêm nguyên liệu vào giỏ hàng thất bại",
+      });
+    }
+  }
+
   async clearCart(req, res) {
     try {
       const userId = req.user.id;
