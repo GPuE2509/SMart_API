@@ -1,4 +1,4 @@
-const { CartItem, ProductUnit, Product } = require("../../models");
+const { CartItem, ProductUnit, Product, RecipeIngredient, Recipe } = require("../../models");
 
 class CartService {
   /**
@@ -100,6 +100,84 @@ class CartService {
     }
 
     return result;
+  }
+
+  /**
+   * Add recipe ingredients to cart
+   */
+  async addRecipeToCart(userId, recipeId) {
+    // Check if recipe exists
+    const recipe = await Recipe.findById(recipeId);
+    if (!recipe) {
+      throw new Error("Công thức không tồn tại");
+    }
+
+    // Get all ingredients for the recipe
+    const ingredients = await RecipeIngredient.find({ recipe_id: recipeId })
+      .populate("product_id")
+      .lean();
+
+    if (!ingredients || ingredients.length === 0) {
+      throw new Error("Công thức này không có nguyên liệu");
+    }
+
+    const addedItems = [];
+    const errors = [];
+
+    // Add each ingredient to cart
+    for (const ingredient of ingredients) {
+      try {
+        if (!ingredient.product_id) {
+          errors.push({
+            message: `Sản phẩm không tồn tại`,
+            ingredient_id: ingredient._id,
+          });
+          continue;
+        }
+
+        // Find base unit or first active unit for the product
+        const productUnit = await ProductUnit.findOne({
+          product_id: ingredient.product_id._id,
+          is_active: true,
+          $or: [{ is_base_unit: true }, { is_base_unit: { $exists: true } }],
+        }).sort({ is_base_unit: -1, price: 1 });
+
+        if (!productUnit) {
+          errors.push({
+            message: `Không tìm thấy đơn vị bán cho sản phẩm ${ingredient.product_id.name}`,
+            product_id: ingredient.product_id._id,
+            product_name: ingredient.product_id.name,
+          });
+          continue;
+        }
+
+        // Add to cart
+        const quantity = ingredient.quantity_needed || 1;
+        const cartItem = await this.addToCart(
+          userId,
+          productUnit._id,
+          quantity
+        );
+        
+        addedItems.push({
+          product_name: ingredient.product_id.name,
+          quantity,
+          cartItem,
+        });
+      } catch (error) {
+        errors.push({
+          message: error.message,
+          product_name: ingredient.product_id?.name,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message: `Đã thêm ${addedItems.length} nguyên liệu vào giỏ hàng`,
+      addedItems,
+      errors: errors.length > 0 ? errors : undefined,
+    };
   }
 
   /**
