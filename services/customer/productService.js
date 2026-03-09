@@ -153,7 +153,7 @@ const productService = {
         const batches = await ProductBatch.find({
           "items.product_id": product._id,
           "items.unit_id": unit.unit_id._id,
-          "items.status": "instock",
+          "items.status": "onsale",
           is_deleted: false,
         }).lean();
 
@@ -164,7 +164,7 @@ const productService = {
             if (
               item.product_id.toString() === product._id.toString() &&
               item.unit_id.toString() === unit.unit_id._id.toString() &&
-              item.status === "instock"
+              item.status === "onsale"
             ) {
               totalStock += item.current_quantity;
             }

@@ -26,7 +26,4 @@ router.get(
   orderController.checkPaymentStatus,
 );
 
-// PayOS webhook (no auth required - called by PayOS)
-router.post("/payos/webhook", orderController.handlePayOSWebhook);
-
 module.exports = router;
