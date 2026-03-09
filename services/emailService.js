@@ -368,3 +368,89 @@ exports.sendAccountInvitationEmail = async (email, fullName, role, verificationT
         throw new Error('Không thể gửi email mời tham gia. Vui lòng thử lại sau.');
     }
 };
+// Send Rescue Pricing Notification to Repository Staff
+exports.sendRescuePricingNotification = async (email, fullName, notifications, notificationRows) => {
+    try {
+        const mailOptions = {
+            from: `"SMart System" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: `🔔 Thông báo giảm giá cứu hộ - ${notifications.length} sản phẩm sắp hết hạn`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
+                    <div style="background-color: #FF9800; padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0;">⚡ SMart - Giảm Giá Cứu Hộ</h1>
+                    </div>
+                    <div style="background-color: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                        <h2 style="color: #333; margin-top: 0;">Xin chào ${fullName}!</h2>
+                        
+                        <div style="background-color: #FFF3E0; padding: 20px; border-left: 4px solid #FF9800; margin: 20px 0;">
+                            <p style="color: #E65100; font-size: 16px; margin: 0; font-weight: bold;">
+                                ⚠️ Có ${notifications.length} sản phẩm sắp hết hạn cần áp dụng giảm giá cứu hộ
+                            </p>
+                        </div>
+
+                        <p style="color: #666; font-size: 16px; line-height: 1.5;">
+                            Hệ thống đã tự động kích hoạt chương trình giảm giá cứu hộ cho các sản phẩm sắp hết hạn. 
+                            Vui lòng in nhãn giá mới và dán lên sản phẩm để tránh lãng phí hàng hóa.
+                        </p>
+
+                        <h3 style="color: #333; margin-top: 30px;">📋 Danh sách sản phẩm:</h3>
+
+                        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                            <thead>
+                                <tr style="background-color: #f5f5f5;">
+                                    <th style="padding: 12px; border: 1px solid #ddd; text-align: left;">Mã lô</th>
+                                    <th style="padding: 12px; border: 1px solid #ddd; text-align: left;">Sản phẩm</th>
+                                    <th style="padding: 12px; border: 1px solid #ddd; text-align: center;">Còn lại</th>
+                                    <th style="padding: 12px; border: 1px solid #ddd; text-align: center;">Giảm giá</th>
+                                    <th style="padding: 12px; border: 1px solid #ddd; text-align: center;">Hạn sử dụng</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${notificationRows}
+                            </tbody>
+                        </table>
+
+                        <div style="background-color: #E3F2FD; padding: 20px; border-left: 4px solid #2196F3; margin: 25px 0;">
+                            <h4 style="margin-top: 0; color: #1565C0;">💡 Hướng dẫn:</h4>
+                            <ol style="color: #666; font-size: 15px; line-height: 1.8; margin: 10px 0;">
+                                <li>Đăng nhập vào hệ thống quản lý lô hàng</li>
+                                <li>Nhấn nút <strong>"In nhãn"</strong> để in nhãn giá mới (đã bao gồm giảm giá)</li>
+                                <li>Dán nhãn lên sản phẩm tương ứng</li>
+                                <li>Nếu sản phẩm là một phần của combo/gói quà, bạn có thể <strong>TẮT</strong> giảm giá tự động bằng nút chuyển đổi</li>
+                            </ol>
+                        </div>
+
+                        <div style="background-color: #FFEBEE; padding: 15px; border-left: 4px solid #F44336; margin: 20px 0;">
+                            <p style="color: #C62828; font-size: 14px; margin: 0;">
+                                ⏰ <strong>Lưu ý:</strong> Giảm giá sẽ tự động tăng khi sản phẩm gần hết hạn hơn. 
+                                Vui lòng kiểm tra và cập nhật nhãn giá thường xuyên.
+                            </p>
+                        </div>
+
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${process.env.WEB_CLIENT_URL || 'http://localhost:5173'}/repository/batches" 
+                               style="background-color: #FF9800; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold; font-size: 16px;">
+                                🏷️ Quản lý lô hàng
+                            </a>
+                        </div>
+
+                        <p style="color: #999; font-size: 13px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
+                            Email này được gửi tự động hàng ngày lúc 00:00 để thông báo về các sản phẩm sắp hết hạn.
+                        </p>
+                    </div>
+                    <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
+                        <p>© 2026 SMart. All rights reserved.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+        console.log('Rescue pricing notification sent:', info.messageId);
+        return { success: true, messageId: info.messageId };
+    } catch (error) {
+        console.error('Error sending rescue pricing notification:', error);
+        throw new Error('Không thể gửi thông báo giảm giá cứu hộ.');
+    }
+};
