@@ -1,4 +1,5 @@
 const salesReportService = require("../../services/admin/salesReportService");
+const financeReportService = require("../../services/admin/financeReportService");
 
 /**
  * Get Revenue & Profit Chart over Time
@@ -87,6 +88,75 @@ exports.getSalesSummary = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Không thể lấy tổng quan báo cáo",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get Rescue Efficiency Report
+ * GET /api/v1/admin/reports/rescue-efficiency
+ * Query params: start_date, end_date
+ */
+exports.getRescueEfficiencyReport = async (req, res) => {
+  try {
+    const result = await salesReportService.getRescueEfficiencyReport(req.query);
+
+    res.json({
+      success: true,
+      message: "Lấy báo cáo hiệu quả cứu hàng thành công",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Không thể lấy báo cáo hiệu quả cứu hàng",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get Cash Flow Chart (inflows: sales, outflows: inventory + operations)
+ * GET /api/v1/admin/reports/cash-flow
+ * Query params: period (day|week|month), start_date, end_date
+ */
+exports.getCashFlowChart = async (req, res) => {
+  try {
+    const result = await financeReportService.getCashFlowChart(req.query);
+
+    res.json({
+      success: true,
+      message: "Lấy dữ liệu biểu đồ dòng tiền thành công",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Không thể lấy dữ liệu dòng tiền",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get Cost vs Retail Price Trend Chart (multi-line: avg cost vs avg retail)
+ * GET /api/v1/admin/reports/cost-retail-trend
+ * Query params: period (day|week|month), start_date, end_date
+ */
+exports.getCostRetailTrendChart = async (req, res) => {
+  try {
+    const result = await financeReportService.getCostRetailTrendChart(req.query);
+
+    res.json({
+      success: true,
+      message: "Lấy dữ liệu xu hướng giá vốn & giá bán thành công",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Không thể lấy dữ liệu xu hướng giá",
       error: error.message,
     });
   }

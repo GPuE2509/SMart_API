@@ -400,17 +400,48 @@ class OrderService {
     }
   }
 
-  // Get user orders
-  async getUserOrders(userId, page = 1, limit = 10) {
+  // Get user orders (search/filter: order_code, date_from, date_to, order_status)
+  async getUserOrders(userId, page = 1, limit = 10, filters = {}) {
     const skip = (page - 1) * limit;
+    const query = { user_id: userId };
 
-    const orders = await Order.find({ user_id: userId })
+    // Mã đơn: tìm chuỗi con (regex, không phân biệt hoa thường)
+    const orderCodeStr = typeof filters.order_code === "string" ? filters.order_code.trim() : "";
+    if (orderCodeStr.length > 0) {
+      const escaped = orderCodeStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      query.order_code = { $regex: escaped, $options: "i" };
+    }
+
+    // Khoảng ngày
+    if (filters.date_from) {
+      const from = new Date(filters.date_from);
+      from.setHours(0, 0, 0, 0);
+      query.created_at = query.created_at || {};
+      query.created_at.$gte = from;
+    }
+    if (filters.date_to) {
+      const to = new Date(filters.date_to);
+      to.setHours(23, 59, 59, 999);
+      query.created_at = query.created_at || {};
+      query.created_at.$lte = to;
+    }
+
+    // Trạng thái đơn: chỉ thêm vào query khi khác "all"
+    const status = typeof filters.order_status === "string" ? filters.order_status.trim() : "";
+    if (status && status !== "all") {
+      const validStatuses = ["pending", "processing", "completed", "cancelled", "returned"];
+      if (validStatuses.includes(status)) {
+        query.order_status = status;
+      }
+    }
+
+    const orders = await Order.find(query)
       .sort({ created_at: -1 })
       .skip(skip)
       .limit(limit)
       .populate("coupon_id");
 
-    const total = await Order.countDocuments({ user_id: userId });
+    const total = await Order.countDocuments(query);
 
     return {
       orders,
