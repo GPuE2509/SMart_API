@@ -37,6 +37,25 @@ const orderDetailSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Rescue Pricing fields
+    is_rescue_pricing: {
+      type: Boolean,
+      default: false,
+    },
+    original_unit_price: {
+      type: Number,
+      default: 0,
+    },
+    rescue_discount_percentage: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    rescue_discount_amount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,

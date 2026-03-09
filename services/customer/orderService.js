@@ -4,6 +4,8 @@ const ProductBatch = require("../../models/ProductBatch");
 const ProductUnit = require("../../models/ProductUnit");
 const Product = require("../../models/Product");
 const User = require("../../models/User");
+const Coupon = require("../../models/Coupon");
+const UserCoupon = require("../../models/UserCoupon");
 const { payos } = require("../../config/payment");
 const mongoose = require("mongoose");
 
@@ -91,12 +93,30 @@ class OrderService {
           );
         }
 
-        const itemTotal = productUnit.price * item.quantity;
+        // Apply rescue pricing if available
+        let finalUnitPrice = productUnit.price;
+        let rescuePricing = {
+          isRescuePricing: false,
+          originalPrice: productUnit.price,
+          discountPercentage: 0,
+          discountAmount: 0,
+        };
+
+        if (batchItem.rescue_pricing_active && batchItem.rescue_discount_percentage > 0) {
+          rescuePricing.isRescuePricing = true;
+          rescuePricing.discountPercentage = batchItem.rescue_discount_percentage;
+          
+          // Calculate discounted price (rounded)
+          finalUnitPrice = Math.round(productUnit.price * (100 - batchItem.rescue_discount_percentage) / 100);
+          rescuePricing.discountAmount = productUnit.price - finalUnitPrice;
+        }
+
+        const itemTotal = Math.round(finalUnitPrice * item.quantity);
         totalAmount += itemTotal;
 
-        // Calculate tax based on product's tax_percentage
+        // Calculate tax based on product's tax_percentage (applied on discounted price)
         const itemTaxPercentage = productUnit.product_id.tax_percentage || 0;
-        const itemTax = (itemTotal * itemTaxPercentage) / 100;
+        const itemTax = Math.round((itemTotal * itemTaxPercentage) / 100);
         taxAmount += itemTax;
 
         orderItems.push({
@@ -104,32 +124,114 @@ class OrderService {
           product_batch_id: batch._id,
           batch_item_id: batchItem._id, // Store the specific item ID
           quantity: item.quantity,
-          unit_price: productUnit.price,
+          unit_price: finalUnitPrice,
           total_price: itemTotal,
           // Store for updating product total_stock
           product_id: productUnit.product_id._id,
           exchange_value: productUnit.exchange_value,
+          // Rescue pricing info
+          is_rescue_pricing: rescuePricing.isRescuePricing,
+          original_unit_price: rescuePricing.originalPrice,
+          rescue_discount_percentage: rescuePricing.discountPercentage,
+          rescue_discount_amount: rescuePricing.discountAmount * item.quantity,
         });
       }
 
-      // Calculate final amount
-      const finalAmount = totalAmount + taxAmount;
+      // Validate and apply coupon if provided
+      let couponDiscount = 0;
+      let appliedCoupon = null;
+      let appliedUserCoupon = null;
+
+      if (couponCode && couponCode.trim()) {
+        // Find coupon by code
+        const coupon = await Coupon.findOne({
+          code: couponCode.trim().toUpperCase(),
+          status: "active",
+        });
+
+        if (!coupon) {
+          throw new Error("Mã giảm giá không hợp lệ");
+        }
+
+        // Check expiry
+        const now = new Date();
+        if (now < coupon.start_date || now > coupon.end_date) {
+          throw new Error("Mã giảm giá đã hết hạn");
+        }
+
+        // Check minimum order value
+        if (totalAmount < coupon.min_order_value) {
+          throw new Error(
+            `Đơn hàng tối thiểu ${coupon.min_order_value.toLocaleString("vi-VN")}đ để sử dụng mã này`
+          );
+        }
+
+        // If points-based coupon, check user ownership
+        if (coupon.points_required && coupon.points_required > 0) {
+          const userCoupon = await UserCoupon.findOne({
+            user_id: userId,
+            coupon_id: coupon._id,
+            is_used: false,
+          });
+
+          if (!userCoupon) {
+            throw new Error(
+              "Bạn không sở hữu mã giảm giá này hoặc đã sử dụng"
+            );
+          }
+
+          appliedUserCoupon = userCoupon;
+        }
+
+        // Calculate discount
+        if (coupon.discount_type === "percent") {
+          couponDiscount = Math.round(
+            (totalAmount * coupon.discount_value) / 100
+          );
+          // Apply max discount cap
+          if (
+            coupon.max_discount_amount &&
+            couponDiscount > coupon.max_discount_amount
+          ) {
+            couponDiscount = coupon.max_discount_amount;
+          }
+        } else {
+          // fixed_amount
+          couponDiscount = coupon.discount_value;
+        }
+
+        // Don't discount more than total
+        couponDiscount = Math.min(couponDiscount, totalAmount);
+        appliedCoupon = coupon;
+      }
+
+      // Calculate final amount (rounded)
+      const finalAmount = Math.round(totalAmount + taxAmount - couponDiscount);
 
       // Create order
       const orderCode = this.generateOrderCode();
       const order = new Order({
         order_code: orderCode,
         user_id: userId,
-        total_amount: totalAmount,
-        tax_amount: taxAmount,
+        total_amount: Math.round(totalAmount),
+        discount_amount: Math.round(couponDiscount),
+        tax_amount: Math.round(taxAmount),
         final_amount: finalAmount,
         payment_method: paymentMethod,
         payment_status: "unpaid",
         order_status: "pending",
         order_type: "online",
+        coupon_id: appliedCoupon ? appliedCoupon._id : null,
       });
 
       await order.save();
+
+      // Mark UserCoupon as used if coupon was applied
+      if (appliedUserCoupon) {
+        appliedUserCoupon.is_used = true;
+        appliedUserCoupon.used_at = new Date();
+        await appliedUserCoupon.save();
+      }
 
       // Create order details
       for (const item of orderItems) {
@@ -141,6 +243,11 @@ class OrderService {
           quantity: item.quantity,
           unit_price: item.unit_price,
           total_price: item.total_price,
+          // Rescue pricing fields
+          is_rescue_pricing: item.is_rescue_pricing || false,
+          original_unit_price: item.original_unit_price || item.unit_price,
+          rescue_discount_percentage: item.rescue_discount_percentage || 0,
+          rescue_discount_amount: item.rescue_discount_amount || 0,
         });
         await orderDetail.save();
 
