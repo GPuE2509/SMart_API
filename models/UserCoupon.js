@@ -18,6 +18,10 @@ const userCouponSchema = new mongoose.Schema({
   is_used: {
     type: Boolean,
     default: false
+  },
+  used_at: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

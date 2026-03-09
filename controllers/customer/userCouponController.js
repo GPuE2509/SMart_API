@@ -94,6 +94,63 @@ const userCouponController = {
       });
     }
   },
+
+  /**
+   * Validate a coupon code for checkout
+   * POST /api/v1/customer/user-coupons/validate
+   * Body: { coupon_code, order_amount }
+   */
+  validateCoupon: async (req, res) => {
+    try {
+      const userId = req.user._id;
+      const { coupon_code, order_amount } = req.body;
+
+      if (!coupon_code) {
+        return res.status(400).json({
+          success: false,
+          message: "coupon_code là bắt buộc",
+        });
+      }
+
+      if (!order_amount || order_amount <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "order_amount là bắt buộc và phải lớn hơn 0",
+        });
+      }
+
+      const result = await userCouponService.validateCoupon(
+        userId,
+        coupon_code,
+        order_amount
+      );
+
+      if (!result.valid) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          data: result,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          coupon: result.coupon,
+          discount: result.discount,
+          user_coupon_id: result.userCoupon?._id,
+        },
+      });
+    } catch (error) {
+      console.error("Error validating coupon:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Không thể kiểm tra mã giảm giá",
+        error: error.message,
+      });
+    }
+  },
 };
 
 module.exports = userCouponController;
