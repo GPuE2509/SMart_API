@@ -72,42 +72,6 @@ class OrderController {
     }
   }
 
-  // PayOS webhook handler
-  async handlePayOSWebhook(req, res) {
-    try {
-      const webhookData = req.body;
-
-      console.log("PayOS Webhook received:", webhookData);
-
-      // Verify and process payment
-      const order = await orderService.verifyPayOSWebhook(webhookData);
-
-      if (order) {
-        console.log(
-          "Payment verified successfully for order:",
-          order.order_code,
-        );
-
-        return res.status(200).json({
-          success: true,
-          message: "Webhook processed successfully",
-          data: order,
-        });
-      }
-
-      res.status(200).json({
-        success: true,
-        message: "Webhook received but payment not completed",
-      });
-    } catch (error) {
-      console.error("PayOS webhook error:", error);
-      res.status(500).json({
-        success: false,
-        message: error.message || "Webhook processing failed",
-      });
-    }
-  }
-
   // Get order by ID
   async getOrderById(req, res) {
     try {
@@ -181,8 +145,6 @@ class OrderController {
       });
     }
   }
-
-
 }
 
 module.exports = new OrderController();
