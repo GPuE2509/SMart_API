@@ -48,6 +48,36 @@ const batchItemSchema = new mongoose.Schema(
       enum: ["instock", "outdate", "onsale", "sold", "rejected"],
       default: "instock",
     },
+    // Rescue pricing fields
+    rescue_pricing_enabled: {
+      type: Boolean,
+      default: true,
+    },
+    rescue_discount_percentage: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    rescue_pricing_active: {
+      type: Boolean,
+      default: false,
+    },
+    rescue_notification_sent: {
+      type: Boolean,
+      default: false,
+    },
+    rescue_notification_date: {
+      type: Date,
+      default: null,
+    },
+    // Manual discount (when rescue pricing is disabled)
+    manual_discount_percentage: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
   },
   { _id: true },
 );
