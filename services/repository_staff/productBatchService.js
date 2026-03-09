@@ -2,6 +2,7 @@ const ProductBatch = require("../../models/ProductBatch");
 const Product = require("../../models/Product");
 const ProductUnit = require("../../models/ProductUnit");
 const InventoryLog = require("../../models/InventoryLog");
+const { generateJSONContent } = require("../../config/gemini");
 
 /**
  * Helper function to remove Vietnamese diacritics
@@ -57,6 +58,91 @@ const updateItemStatus = (item) => {
 };
 
 /**
+ * Helper function to compute batch overall status based on items
+ * @param {Object} batch - Batch object
+ * @returns {String} - Computed status
+ */
+/**
+ * Helper function to compute batch status information
+ * @param {Object} batch - Batch object
+ * @returns {Object} - { status, status_summary, can_change_status }
+ */
+const computeBatchStatus = (batch) => {
+  if (!batch.items || batch.items.length === 0) {
+    return {
+      status: "instock",
+      status_summary: {},
+      can_change_status: true,
+    };
+  }
+
+  // Count items by status
+  const statusCounts = {};
+  batch.items.forEach((item) => {
+    const status = item.status || "instock";
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+  });
+
+  const totalItems = batch.items.length;
+
+  // If all items are sold -> status = "sold", cannot change
+  if (statusCounts.sold === totalItems) {
+    return {
+      status: "sold",
+      status_summary: statusCounts,
+      can_change_status: false,
+    };
+  }
+
+  // If any item is rejected -> status = "rejected", cannot change
+  if (statusCounts.rejected && statusCounts.rejected > 0) {
+    return {
+      status: "rejected",
+      status_summary: statusCounts,
+      can_change_status: false,
+    };
+  }
+
+  // Primary status is onsale or instock
+  // Priority: onsale > instock
+  let primaryStatus = "instock";
+  if (statusCounts.onsale && statusCounts.onsale > 0) {
+    primaryStatus = "onsale";
+  }
+
+  return {
+    status: primaryStatus,
+    status_summary: statusCounts,
+    can_change_status: true,
+  };
+};
+
+/**
+ * Helper function to compute batch overall date_status based on items
+ * @param {Object} batch - Batch object
+ * @returns {String} - Computed date_status
+ */
+const computeBatchDateStatus = (batch) => {
+  if (!batch.items || batch.items.length === 0) return "active";
+
+  // Get all unique date_statuses
+  const dateStatuses = [
+    ...new Set(batch.items.map((item) => item.date_status)),
+  ];
+
+  // If all items have the same date_status, use that
+  if (dateStatuses.length === 1) {
+    return dateStatuses[0];
+  }
+
+  // Priority order: expired > near_expiry > active
+  // If there are multiple date_statuses, use the highest priority one
+  if (dateStatuses.includes("expired")) return "expired";
+  if (dateStatuses.includes("near_expiry")) return "near_expiry";
+  return "active";
+};
+
+/**
  * Helper function to update all items' date_status in a batch
  * @param {Object} batch - Batch object
  * @returns {Object} - Updated batch
@@ -66,6 +152,13 @@ const updateBatchStatus = (batch) => {
 
   // Update date_status for each item based on expiry date
   batch.items = batch.items.map(updateItemStatus);
+
+  // Compute batch status information
+  const batchStatusInfo = computeBatchStatus(batch);
+  batch.status = batchStatusInfo.status;
+  batch.status_summary = batchStatusInfo.status_summary;
+  batch.can_change_status = batchStatusInfo.can_change_status;
+  batch.date_status = computeBatchDateStatus(batch);
 
   return batch;
 };
@@ -253,6 +346,23 @@ exports.getBatchById = async (id) => {
 
   // Update status based on expiry date
   batch = updateBatchStatus(batch);
+
+  // If batch is deleted (rejected), fetch rejection reason from InventoryLog
+  if (batch.is_deleted) {
+    const rejectionLog = await InventoryLog.findOne({
+      product_batch_id: batch._id,
+      reason_type: "batch_rejection",
+    })
+      .select("note created_at created_by")
+      .populate("created_by", "name email")
+      .sort({ created_at: 1 }); // Get the first rejection log
+
+    if (rejectionLog) {
+      batch.rejection_note = rejectionLog.note;
+      batch.rejection_date = rejectionLog.created_at;
+      batch.rejection_by = rejectionLog.created_by;
+    }
+  }
 
   return batch;
 };
@@ -491,7 +601,7 @@ exports.updateBatch = async (id, batchData, userId) => {
         }
       }
 
-      // Update item fields
+      // Update item fields (preserve sold/rejected status)
       batch.items[i] = {
         product_id: newItem.product_id,
         unit_id: newItem.unit_id,
@@ -501,7 +611,8 @@ exports.updateBatch = async (id, batchData, userId) => {
         manufacture_date: newItem.manufacture_date,
         expiry_date: newItem.expiry_date,
         supplier_name: newItem.supplier_name,
-        status: oldItem.status || "instock", // Preserve manual status
+        // Preserve sold/rejected status, cannot be changed via update
+        status: (oldItem.status === "sold" || oldItem.status === "rejected") ? oldItem.status : (oldItem.status || "instock"),
         date_status: oldItem.date_status || "active", // Will be updated by updateBatchStatus
       };
     }
@@ -532,34 +643,42 @@ exports.rejectBatch = async (batchId, reason, userId) => {
     throw new Error("Lô hàng này đã bị từ chối trước đó");
   }
 
-  // Create inventory logs for each item in the batch
+  // Create inventory logs for each item in the batch (skip sold items)
   for (const item of batch.items) {
-    await InventoryLog.create({
-      product_batch_id: batch._id,
-      batch_item_id: item._id,
-      product_id: item.product_id,
-      unit_id: item.unit_id,
-      quantity_change: -item.current_quantity,
-      reason_type: "batch_rejection",
-      note: reason || `Từ chối lô hàng ${batch._id}`,
-      created_by: userId,
-    });
+    // Skip sold items - they're already out of inventory
+    if (item.status === "sold") {
+      continue;
+    }
 
-    // Update product total stock
-    const product = await Product.findById(item.product_id);
-    const productUnit = await ProductUnit.findOne({
-      product_id: item.product_id,
-      unit_id: item.unit_id,
-    });
+    // Only create log and update stock for non-sold items
+    if (item.current_quantity > 0) {
+      await InventoryLog.create({
+        product_batch_id: batch._id,
+        batch_item_id: item._id,
+        product_id: item.product_id,
+        unit_id: item.unit_id,
+        quantity_change: -item.current_quantity,
+        reason_type: "batch_rejection",
+        note: reason || `Từ chối lô hàng ${batch._id}`,
+        created_by: userId,
+      });
 
-    if (product && productUnit) {
-      const quantityInBaseUnit =
-        item.current_quantity * productUnit.exchange_value;
-      product.total_stock = Math.max(
-        0,
-        (product.total_stock || 0) - quantityInBaseUnit,
-      );
-      await product.save();
+      // Update product total stock
+      const product = await Product.findById(item.product_id);
+      const productUnit = await ProductUnit.findOne({
+        product_id: item.product_id,
+        unit_id: item.unit_id,
+      });
+
+      if (product && productUnit) {
+        const quantityInBaseUnit =
+          item.current_quantity * productUnit.exchange_value;
+        product.total_stock = Math.max(
+          0,
+          (product.total_stock || 0) - quantityInBaseUnit,
+        );
+        await product.save();
+      }
     }
   }
 
@@ -568,11 +687,19 @@ exports.rejectBatch = async (batchId, reason, userId) => {
   batch.deleted_at = new Date();
   batch.deleted_by = userId;
 
-  // Set all items status to rejected
-  batch.items = batch.items.map((item) => ({
-    ...item,
-    status: "rejected",
-  }));
+  // Set items status to rejected (except sold items - they're already sold to customers)
+  batch.items = batch.items.map((item) => {
+    // Keep sold items unchanged - can't reject what's already sold
+    if (item.status === "sold") {
+      return item;
+    }
+    
+    // Reject all other items
+    return {
+      ...item,
+      status: "rejected",
+    };
+  });
 
   await batch.save();
 
@@ -582,16 +709,17 @@ exports.rejectBatch = async (batchId, reason, userId) => {
 /**
  * Change product batch items status
  * @param {String} batchId - Batch ID
- * @param {String} newStatus - New status for items
+ * @param {String} newStatus - New status for items (only "instock" or "onsale" allowed)
  * @param {ObjectId} userId - User performing the change
  * @returns {Object} - Updated batch
  */
 exports.changeStatus = async (batchId, newStatus, userId) => {
-  const validStatuses = ["instock", "outdate", "onsale", "sold"];
+  // Only allow changing to instock or onsale
+  const validStatuses = ["instock", "onsale"];
 
   if (!validStatuses.includes(newStatus)) {
     throw new Error(
-      `Trạng thái không hợp lệ. Chỉ chấp nhận: ${validStatuses.join(", ")}`,
+      `Trạng thái không hợp lệ. Chỉ có thể đổi sang: ${validStatuses.join(", ")}`,
     );
   }
 
@@ -605,14 +733,40 @@ exports.changeStatus = async (batchId, newStatus, userId) => {
     throw new Error("Không thể thay đổi trạng thái lô hàng đã bị từ chối");
   }
 
-  // Get old status (from first item for logging)
-  const oldStatus = batch.items[0]?.status || "unknown";
+  // Check if batch has any rejected items - cannot change status if rejected
+  const hasRejectedItems = batch.items.some(
+    (item) => item.status === "rejected",
+  );
+  if (hasRejectedItems) {
+    throw new Error(
+      "Không thể thay đổi trạng thái lô hàng đã có sản phẩm bị từ chối",
+    );
+  }
 
-  // Update status for all items in batch
-  batch.items = batch.items.map((item) => ({
-    ...item,
-    status: newStatus,
-  }));
+  // Check if all items are sold - cannot change status
+  const allSold = batch.items.every((item) => item.status === "sold");
+  if (allSold) {
+    throw new Error("Không thể thay đổi trạng thái lô hàng đã bán hết");
+  }
+
+  // Count items that will be updated
+  let updatedCount = 0;
+  const unchangedStatuses = ["sold", "rejected", "outdate"]; // Don't change these statuses
+
+  // Update status only for items that are not sold, rejected, or outdate
+  batch.items = batch.items.map((item) => {
+    // Keep sold, rejected, and outdate items unchanged
+    if (unchangedStatuses.includes(item.status)) {
+      return item;
+    }
+
+    // Update status for instock/onsale items only
+    updatedCount++;
+    return {
+      ...item,
+      status: newStatus,
+    };
+  });
 
   await batch.save();
 
@@ -621,9 +775,235 @@ exports.changeStatus = async (batchId, newStatus, userId) => {
     product_batch_id: batch._id,
     quantity_change: 0,
     reason_type: "adjustment",
-    note: `Thay đổi trạng thái lô hàng: ${oldStatus} → ${newStatus}`,
+    note: `Thay đổi trạng thái lô hàng sang ${newStatus} (${updatedCount} sản phẩm được cập nhật, bỏ qua sản phẩm đã sold/rejected/outdate)`,
     created_by: userId,
   });
 
   return batch;
+};
+
+exports.getSmartReplenishmentSuggestions = async (options = {}) => {
+
+  // Calculate date range for analysis
+  const dateRange = {};
+  
+  if (options.date_from && options.date_to) {
+    // Use custom date range
+    dateRange.created_at = {
+      $gte: new Date(options.date_from),
+      $lte: new Date(options.date_to),
+    };
+  } else if (options.days_back) {
+    // Use days_back parameter (default: 90 days)
+    const daysBack = parseInt(options.days_back) || 90;
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - daysBack);
+    dateRange.created_at = { $gte: fromDate };
+  } else {
+    // Default: last 90 days
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 90);
+    dateRange.created_at = { $gte: fromDate };
+  }
+
+  // Get batches within date range
+  const allBatches = await ProductBatch.find(dateRange)
+    .populate("items.product_id", "name category_id total_stock")
+    .populate("items.unit_id", "name abbreviation")
+    .lean();
+
+  // Get inventory logs within date range
+  const logQuery = {
+    reason_type: { $in: ["expired_disposal", "damaged", "batch_rejection"] },
+  };
+  
+  if (dateRange.created_at) {
+    logQuery.created_at = dateRange.created_at;
+  }
+
+  const inventoryLogs = await InventoryLog.find(logQuery)
+    .populate("product_id", "name")
+    .sort({ created_at: -1 })
+    .limit(200)
+    .lean();
+
+  // Analyze overstocking patterns by product
+  const productAnalysis = {};
+
+  allBatches.forEach((batch) => {
+    batch.items.forEach((item) => {
+      if (!item.product_id) return;
+
+      const productId = item.product_id._id.toString();
+      const productName = item.product_id.name;
+
+      if (!productAnalysis[productId]) {
+        productAnalysis[productId] = {
+          product_id: productId,
+          product_name: productName,
+          total_stock: item.product_id.total_stock || 0,
+          total_imported: 0,
+          total_expired: 0,
+          total_outdate: 0,
+          total_rejected: 0,
+          import_history: [],
+          waste_rate: 0,
+        };
+      }
+
+      // Track import history
+      productAnalysis[productId].import_history.push({
+        batch_code: batch._id,
+        quantity: item.initial_quantity,
+        current_quantity: item.current_quantity,
+        status: item.status,
+        date_status: item.date_status,
+        import_date: batch.created_at,
+        expiry_date: item.expiry_date,
+      });
+
+      productAnalysis[productId].total_imported += item.initial_quantity;
+
+      // Track waste (expired, outdate, rejected)
+      if (item.date_status === "expired") {
+        productAnalysis[productId].total_expired += item.current_quantity;
+      }
+      if (item.status === "outdate") {
+        productAnalysis[productId].total_outdate += item.current_quantity;
+      }
+      if (item.status === "rejected") {
+        productAnalysis[productId].total_rejected += item.current_quantity;
+      }
+    });
+  });
+
+  // Calculate waste rates
+  Object.keys(productAnalysis).forEach((productId) => {
+    const data = productAnalysis[productId];
+    const totalWaste =
+      data.total_expired + data.total_outdate + data.total_rejected;
+    data.waste_rate = data.total_imported > 0 ? totalWaste / data.total_imported : 0;
+  });
+
+  // Filter products with high waste rates or current stock issues
+  const problematicProducts = Object.values(productAnalysis).filter(
+    (p) => p.waste_rate > 0.05 || p.total_expired > 0 || p.total_outdate > 0,
+  );
+
+  // Prepare data for AI analysis
+  const aiPrompt = `Bạn là một chuyên gia quản lý kho hàng. Phân tích dữ liệu lịch sử nhập hàng và đưa ra gợi ý thông minh về số lượng nên nhập cho từng sản phẩm để tránh tình trạng nhập hàng quá mức (overstocking).
+
+Dữ liệu lịch sử:
+${JSON.stringify(problematicProducts, null, 2)}
+
+Dữ liệu phụ (logs về hàng hỏng/hết hạn):
+${JSON.stringify(inventoryLogs.slice(0, 20), null, 2)}
+
+Hãy đưa ra gợi ý dưới dạng JSON với cấu trúc sau:
+{
+  "suggestions": [
+    {
+      "product_id": "id_sản_phẩm",
+      "product_name": "tên_sản_phẩm",
+      "current_stock": số_lượng_hiện_tại,
+      "recommended_quantity": số_lượng_nên_nhập,
+      "reasoning": "lý_do_chi_tiết",
+      "waste_rate": tỷ_lệ_hao_hụt,
+      "priority": "high" | "medium" | "low",
+      "warning": "cảnh_báo_nếu_có"
+    }
+  ],
+  "overall_analysis": {
+    "total_waste_value_estimate": giá_trị_ước_tính_hao_hụt,
+    "key_insights": ["insight1", "insight2", "insight3"],
+    "best_practices": ["practice1", "practice2"]
+  }
+}
+
+Lưu ý:
+- Nếu waste_rate > 20%: priority = "high" và khuyến nghị giảm số lượng nhập
+- Nếu waste_rate 10-20%: priority = "medium" và điều chỉnh vừa phải
+- Nếu waste_rate < 10%: priority = "low"
+- Xem xét total_stock hiện tại để đưa ra khuyến nghị phù hợp
+- Đưa ra số lượng cụ thể, không chỉ nói "giảm" hay "tăng"
+- Chỉ trả về JSON, không có text thừa
+
+Khoảng thời gian phân tích: ${dateRange.created_at ? `Từ ${new Date(dateRange.created_at.$gte).toLocaleDateString('vi-VN')} đến ${dateRange.created_at.$lte ? new Date(dateRange.created_at.$lte).toLocaleDateString('vi-VN') : 'hiện tại'}` : 'Toàn bộ lịch sử'}
+Số lô hàng phân tích: ${allBatches.length}
+Số log phân tích: ${inventoryLogs.length}`;
+
+  try {
+    const aiResponse = await generateJSONContent(aiPrompt);
+
+    return {
+      success: true,
+      data: {
+        suggestions: aiResponse.suggestions || [],
+        analysis: aiResponse.overall_analysis || {},
+        product_analysis: problematicProducts,
+        date_range: {
+          from: dateRange.created_at?.$gte || null,
+          to: dateRange.created_at?.$lte || null,
+          days_analyzed: options.days_back || 90,
+        },
+        stats: {
+          total_batches: allBatches.length,
+          total_logs: inventoryLogs.length,
+          products_analyzed: problematicProducts.length,
+        },
+        timestamp: new Date(),
+      },
+    };
+  } catch (error) {
+    console.error("Error getting AI suggestions:", error);
+
+    // Fallback to rule-based suggestions if AI fails
+    const fallbackSuggestions = problematicProducts.map((p) => ({
+      product_id: p.product_id,
+      product_name: p.product_name,
+      current_stock: p.total_stock,
+      recommended_quantity: Math.max(
+        0,
+        Math.floor(p.total_imported * (1 - p.waste_rate) * 0.5),
+      ),
+      reasoning: `Dựa trên tỷ lệ hao hụt ${(p.waste_rate * 100).toFixed(1)}%, khuyến nghị giảm số lượng nhập để tránh tồn kho`,
+      waste_rate: p.waste_rate,
+      priority:
+        p.waste_rate > 0.2 ? "high" : p.waste_rate > 0.1 ? "medium" : "low",
+      warning:
+        p.waste_rate > 0.2
+          ? "Sản phẩm có tỷ lệ hao hụt cao, cần xem xét lại chiến lược nhập hàng"
+          : null,
+    }));
+
+    return {
+      success: true,
+      data: {
+        suggestions: fallbackSuggestions,
+        analysis: {
+          total_waste_value_estimate: 0,
+          key_insights: [
+            "AI tạm thời không khả dụng, sử dụng gợi ý dựa trên quy tắc",
+          ],
+          best_practices: [
+            "Theo dõi hạn sử dụng sản phẩm thường xuyên",
+            "Nhập hàng dựa trên dự báo nhu cầu thực tế",
+          ],
+        },
+        product_analysis: problematicProducts,
+        date_range: {
+          from: dateRange.created_at?.$gte || null,
+          to: dateRange.created_at?.$lte || null,
+          days_analyzed: options.days_back || 90,
+        },
+        stats: {
+          total_batches: allBatches.length,
+          total_logs: inventoryLogs.length,
+          products_analyzed: problematicProducts.length,
+        },
+        timestamp: new Date(),
+        fallback: true,
+      },
+    };
+  }
 };
