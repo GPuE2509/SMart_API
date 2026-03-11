@@ -724,9 +724,7 @@ exports.setPasswordForNewAccount = async (req, res) => {
                 success: false,
                 message: error.message
             });
-        }
-
-        res.status(500).json({
+        }        res.status(500).json({
             success: false,
             message: 'Không thể đặt mật khẩu',
             error: error.message

@@ -58,4 +58,43 @@ router.get(
   salesReportController.getSalesSummary,
 );
 
+/**
+ * @route   GET /api/v1/admin/reports/rescue-efficiency
+ * @desc    Get Rescue Efficiency Report (recovered revenue, loss of cost, successful rescue rate)
+ * @access  Admin only
+ * @query   start_date, end_date
+ */
+router.get(
+  "/rescue-efficiency",
+  authenticateUser,
+  authorizeRoles("admin"),
+  salesReportController.getRescueEfficiencyReport,
+);
+
+/**
+ * @route   GET /api/v1/admin/reports/cash-flow
+ * @desc    Cash Flow Chart (inflows: sales, outflows: inventory + operations)
+ * @access  Admin only
+ * @query   period (day|week|month), start_date, end_date
+ */
+router.get(
+  "/cash-flow",
+  authenticateUser,
+  authorizeRoles("admin"),
+  salesReportController.getCashFlowChart,
+);
+
+/**
+ * @route   GET /api/v1/admin/reports/cost-retail-trend
+ * @desc    Cost vs Retail Price Trend (multi-line chart)
+ * @access  Admin only
+ * @query   period (day|week|month), start_date, end_date
+ */
+router.get(
+  "/cost-retail-trend",
+  authenticateUser,
+  authorizeRoles("admin"),
+  salesReportController.getCostRetailTrendChart,
+);
+
 module.exports = router;

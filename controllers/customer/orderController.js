@@ -93,14 +93,19 @@ class OrderController {
     }
   }
 
-  // Get user orders
+  // Get user orders (query: page, limit, order_code, date_from, date_to, order_status)
   async getUserOrders(req, res) {
     try {
       const userId = req.user.id;
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 10;
+      const orderCode = typeof req.query.order_code === "string" ? req.query.order_code.trim() : "";
+      const dateFrom = req.query.date_from || null;
+      const dateTo = req.query.date_to || null;
+      const orderStatus = typeof req.query.order_status === "string" ? req.query.order_status.trim() : "all";
 
-      const result = await orderService.getUserOrders(userId, page, limit);
+      const filters = { order_code: orderCode, date_from: dateFrom, date_to: dateTo, order_status: orderStatus };
+      const result = await orderService.getUserOrders(userId, page, limit, filters);
 
       res.status(200).json({
         success: true,
