@@ -387,6 +387,9 @@ class OrderService {
             order.payment_status = "paid";
             order.order_status = "processing";
             await order.save();
+
+            // Cộng điểm tích lũy cho khách hàng
+            await this._awardLoyaltyPoints(order);
           }
         } catch (payosError) {
           console.error("PayOS API error:", payosError.message);
@@ -489,6 +492,9 @@ class OrderService {
               order.payment_status = "paid";
               order.order_status = "processing";
               await order.save();
+
+              // Cộng điểm tích lũy cho khách hàng
+              await this._awardLoyaltyPoints(order);
               continue; // Bỏ qua, không cancel
             }
           }
@@ -544,6 +550,31 @@ class OrderService {
       }
     } catch (error) {
       console.error("[Auto-Cron] Lỗi khi chạy quét rác tự động:", error);
+    }
+  }
+  // ==================== LOYALTY POINTS ====================
+  /**
+   * Cộng điểm tích lũy cho khách hàng khi đơn được thanh toán thành công.
+   * Công thức: 1.000đ = 1 điểm (floor)
+   * Chỉ cộng khi payment_status = "paid".
+   */
+  async _awardLoyaltyPoints(order) {
+    try {
+      if (!order.user_id || order.payment_status !== "paid") return;
+
+      const pointsEarned = Math.floor(order.final_amount / 1000);
+      if (pointsEarned <= 0) return;
+
+      await User.findByIdAndUpdate(order.user_id, {
+        $inc: { loyalty_points: pointsEarned },
+      });
+
+      console.log(
+        `[Loyalty] ⭐ Cộng ${pointsEarned} điểm cho user ${order.user_id} (đơn ${order.order_code}, ${order.final_amount.toLocaleString("vi-VN")}đ)`,
+      );
+    } catch (err) {
+      // Không để lỗi điểm làm hỏng luồng thanh toán
+      console.error("[Loyalty] Lỗi khi cộng điểm:", err.message);
     }
   }
 }
