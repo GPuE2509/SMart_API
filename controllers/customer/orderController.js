@@ -93,6 +93,48 @@ class OrderController {
     }
   }
 
+  async getReorderPreview(req, res) {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user.id;
+
+      const result = await orderService.getReorderPreview(userId, orderId);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error("Get reorder preview error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to load reorder preview",
+      });
+    }
+  }
+
+  // Reorder: add previous order items back to cart
+  async reorderOrder(req, res) {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user.id;
+
+      const result = await orderService.reorderOrder(userId, orderId);
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      console.error("Reorder error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to reorder",
+      });
+    }
+  }
+
   // Get user orders (query: page, limit, order_code, date_from, date_to, order_status)
   async getUserOrders(req, res) {
     try {
