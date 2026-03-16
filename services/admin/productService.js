@@ -3,17 +3,18 @@ const ProductUnit = require("../../models/ProductUnit");
 const Category = require("../../models/Category");
 const { uploadImage } = require("../../utils/uploadImage");
 
-
 const removeVietnameseDiacritics = (str) => {
-  if (!str) return "";
-  return str
+  if (str === null || str === undefined) return "";
+  return String(str)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(
+      /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g,
+      "",
+    )
     .replace(/đ/g, "d")
     .replace(/Đ/g, "D")
     .toLowerCase();
 };
-
 
 exports.getAllProducts = async (filters) => {
   const {
