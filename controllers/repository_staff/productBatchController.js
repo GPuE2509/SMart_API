@@ -1,6 +1,198 @@
 const productBatchService = require("../../services/repository_staff/productBatchService");
 const rescuePricingService = require("../../services/rescuePricingService");
 
+const escapeHtml = (value = "") =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const formatCurrency = (value = 0) =>
+  Math.round(Number(value) || 0).toLocaleString("vi-VN");
+
+const buildPrintLabelHtml = (labelData, options = {}) => {
+  const copies = Number.isInteger(options.copies) ? options.copies : 8;
+  const pageTitle = options.title || "Nhan Gia";
+
+  const labelContent = `
+    <div class="label">
+      ${
+        labelData.rescuePricing
+          ? '<div class="discount-badge">KHUYEN MAI</div>'
+          : ""
+      }
+
+      <div class="product-info">
+        <div class="product-name">${escapeHtml(labelData.productName)}</div>
+        <div class="product-unit">${escapeHtml(labelData.unitName)}</div>
+      </div>
+
+      <div class="price-container">
+        ${
+          labelData.rescuePricing
+            ? `<div class="price-row">
+                <span class="original-price">${formatCurrency(
+                  labelData.originalPrice
+                )}</span>
+                <span class="original-price">d</span>
+                <span class="discount-percent">-${escapeHtml(
+                  labelData.discountPercentage
+                )}%</span>
+              </div>`
+            : ""
+        }
+        <div class="final-price-row">
+          <span class="final-price">${formatCurrency(labelData.finalPrice)}</span>
+          <span class="currency">d</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const labelsGrid = Array(copies).fill(labelContent).join("");
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>${escapeHtml(pageTitle)}</title>
+      <style>
+        @page {
+          size: A4;
+          margin: 5mm;
+        }
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        body {
+          font-family: Arial, sans-serif;
+          width: 210mm;
+          background: white;
+          margin: 0 auto;
+        }
+        .page {
+          width: 210mm;
+          min-height: 297mm;
+          display: grid;
+          grid-template-columns: repeat(2, 90mm);
+          grid-template-rows: repeat(4, 60mm);
+          gap: 5mm;
+          padding: 10mm;
+          page-break-after: always;
+        }
+        .label {
+          position: relative;
+          width: 90mm;
+          height: 60mm;
+          display: flex;
+          flex-direction: row;
+          padding: 4mm;
+          background: #fff4e6;
+          border: 1px solid #ff4d4f;
+        }
+        .discount-badge {
+          position: absolute;
+          top: 0;
+          right: 0;
+          background: #ff4d4f;
+          color: white;
+          padding: 2mm 4mm;
+          font-weight: bold;
+          font-size: 12px;
+          border-bottom-left-radius: 3mm;
+        }
+        .product-info {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          padding-right: 4mm;
+          margin-top: 8mm;
+        }
+        .product-name {
+          font-size: 25px;
+          font-weight: bold;
+          line-height: 1.3;
+          margin-bottom: 2mm;
+          color: #000;
+          text-transform: uppercase;
+        }
+        .product-unit {
+          font-size: 20px;
+          color: #666;
+        }
+        .price-container {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          border-left: 2px solid #ff4d4f;
+          padding-left: 4mm;
+        }
+        .price-row {
+          display: flex;
+          align-items: center;
+          gap: 2mm;
+          margin-bottom: 2mm;
+        }
+        .original-price {
+          text-decoration: line-through;
+          color: #999;
+          font-size: 13px;
+        }
+        .discount-percent {
+          background: #ff4d4f;
+          color: white;
+          padding: 1mm 2mm;
+          border-radius: 2mm;
+          font-size: 12px;
+          font-weight: bold;
+        }
+        .final-price-row {
+          display: flex;
+          align-items: baseline;
+          gap: 1mm;
+          margin-top: 2mm;
+        }
+        .currency {
+          font-size: 18px;
+          font-weight: bold;
+          color: #ff4d4f;
+        }
+        .final-price {
+          font-size: 36px;
+          font-weight: bold;
+          color: #ff4d4f;
+          line-height: 1;
+        }
+        @media print {
+          body {
+            margin: 0;
+            padding: 0;
+          }
+          .label {
+            background: #fff4e6;
+            border: 1px solid #ff4d4f;
+            page-break-inside: avoid;
+          }
+          .page {
+            page-break-after: always;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="page">${labelsGrid}</div>
+    </body>
+    </html>
+  `;
+};
+
 /**
  * Get all batches with filters, search, and pagination
  * GET /api/v1/batches
@@ -330,6 +522,7 @@ exports.getRescuePricingInfo = async (req, res) => {
 exports.getPrintLabel = async (req, res) => {
   try {
     const { batchId, itemId } = req.params;
+    const responseFormat = String(req.query.format || "json").toLowerCase();
 
     const ProductBatch = require('../../models/ProductBatch');
     const ProductUnit = require('../../models/ProductUnit');
@@ -406,6 +599,21 @@ exports.getPrintLabel = async (req, res) => {
       isAutoDiscount: isAutoDiscount,
       importPrice: item.import_price || 0, // Giá nhập (để tham khảo)
     };
+
+    if (responseFormat === "html") {
+      const parsedCopies = Number.parseInt(req.query.copies, 10);
+      const copies = Number.isInteger(parsedCopies)
+        ? Math.min(Math.max(parsedCopies, 1), 100)
+        : 8;
+
+      const html = buildPrintLabelHtml(labelData, {
+        copies,
+        title: `Nhan Gia - ${product.name || "San Pham"}`,
+      });
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.status(200).send(html);
+    }
 
     res.status(200).json({
       success: true,
