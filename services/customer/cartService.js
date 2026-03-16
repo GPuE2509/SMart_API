@@ -70,14 +70,13 @@ class CartService {
           savings: 0,
         };
 
-        // Find available batch with rescue pricing
+        // Find available batch and apply active discount policy (rescue or manual)
         if (product && unit) {
           const batch = await ProductBatch.findOne({
             "items.product_id": product._id,
             "items.unit_id": unit._id,
             "items.current_quantity": { $gte: item.quantity },
             "items.status": "onsale",
-            "items.rescue_pricing_active": true,
             is_deleted: false,
           }).sort({ created_at: 1 });
 
@@ -87,23 +86,40 @@ class CartService {
                 bItem.product_id.toString() === product._id.toString() &&
                 bItem.unit_id.toString() === unit._id.toString() &&
                 bItem.current_quantity >= item.quantity &&
-                bItem.status === "onsale" &&
-                bItem.rescue_pricing_active &&
-                bItem.rescue_discount_percentage > 0
+                bItem.status === "onsale"
             );
 
             if (batchItem) {
+              let discountPercentage = 0;
+
+              if (
+                batchItem.rescue_pricing_enabled &&
+                batchItem.rescue_pricing_active &&
+                batchItem.rescue_discount_percentage > 0
+              ) {
+                discountPercentage = batchItem.rescue_discount_percentage;
+              } else if (
+                !batchItem.rescue_pricing_enabled &&
+                batchItem.manual_discount_percentage > 0
+              ) {
+                discountPercentage = batchItem.manual_discount_percentage;
+              }
+
               const originalPrice = productUnit.price;
-              const discountedPrice = Math.round(originalPrice * (100 - batchItem.rescue_discount_percentage) / 100);
-              const savingsPerUnit = originalPrice - discountedPrice;
-              
-              rescuePricing = {
-                isAvailable: true,
-                originalPrice: originalPrice,
-                discountPercentage: batchItem.rescue_discount_percentage,
-                discountedPrice: discountedPrice,
-                savings: savingsPerUnit * item.quantity,
-              };
+              if (discountPercentage > 0) {
+                const discountedPrice = Math.round(
+                  (originalPrice * (100 - discountPercentage)) / 100,
+                );
+                const savingsPerUnit = originalPrice - discountedPrice;
+
+                rescuePricing = {
+                  isAvailable: true,
+                  originalPrice: originalPrice,
+                  discountPercentage,
+                  discountedPrice: discountedPrice,
+                  savings: savingsPerUnit * item.quantity,
+                };
+              }
             }
           }
         }
