@@ -8,10 +8,13 @@ const { generateJSONContent } = require("../../config/gemini");
  * Helper function to remove Vietnamese diacritics
  */
 const removeVietnameseDiacritics = (str) => {
-  if (!str) return "";
-  return str
+  if (str === null || str === undefined) return "";
+  return String(str)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(
+      /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g,
+      "",
+    )
     .replace(/đ/g, "d")
     .replace(/Đ/g, "D")
     .toLowerCase();
@@ -612,7 +615,10 @@ exports.updateBatch = async (id, batchData, userId) => {
         expiry_date: newItem.expiry_date,
         supplier_name: newItem.supplier_name,
         // Preserve sold/rejected status, cannot be changed via update
-        status: (oldItem.status === "sold" || oldItem.status === "rejected") ? oldItem.status : (oldItem.status || "instock"),
+        status:
+          oldItem.status === "sold" || oldItem.status === "rejected"
+            ? oldItem.status
+            : oldItem.status || "instock",
         date_status: oldItem.date_status || "active", // Will be updated by updateBatchStatus
       };
     }
@@ -693,7 +699,7 @@ exports.rejectBatch = async (batchId, reason, userId) => {
     if (item.status === "sold") {
       return item;
     }
-    
+
     // Reject all other items
     return {
       ...item,
@@ -783,10 +789,9 @@ exports.changeStatus = async (batchId, newStatus, userId) => {
 };
 
 exports.getSmartReplenishmentSuggestions = async (options = {}) => {
-
   // Calculate date range for analysis
   const dateRange = {};
-  
+
   if (options.date_from && options.date_to) {
     // Use custom date range
     dateRange.created_at = {
@@ -816,7 +821,7 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
   const logQuery = {
     reason_type: { $in: ["expired_disposal", "damaged", "batch_rejection"] },
   };
-  
+
   if (dateRange.created_at) {
     logQuery.created_at = dateRange.created_at;
   }
@@ -882,19 +887,20 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
     const data = productAnalysis[productId];
     const totalWaste =
       data.total_expired + data.total_outdate + data.total_rejected;
-    data.waste_rate = data.total_imported > 0 ? totalWaste / data.total_imported : 0;
+    data.waste_rate =
+      data.total_imported > 0 ? totalWaste / data.total_imported : 0;
   });
 
   // ===== NEW: Analyze sales data to identify best-selling products =====
   const OrderDetail = require("../../models/OrderDetail");
   const ProductUnit = require("../../models/ProductUnit");
-  
+
   // Build order query based on date range
   const orderQuery = {};
   if (dateRange.created_at) {
     orderQuery.createdAt = dateRange.created_at;
   }
-  
+
   // Get all order details within date range
   const orderDetails = await OrderDetail.find(orderQuery)
     .populate({
@@ -902,24 +908,25 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
       select: "product_id exchange_value",
       populate: {
         path: "product_id",
-        select: "name total_stock category_id"
-      }
+        select: "name total_stock category_id",
+      },
     })
     .lean();
 
   // Analyze sales by product
   const salesAnalysis = {};
-  
+
   orderDetails.forEach((detail) => {
     if (!detail.product_unit_id || !detail.product_unit_id.product_id) return;
-    
+
     const product = detail.product_unit_id.product_id;
     const productId = product._id.toString();
     const productName = product.name;
-    
+
     // Convert quantity to base unit
-    const baseQuantity = detail.quantity * (detail.product_unit_id.exchange_value || 1);
-    
+    const baseQuantity =
+      detail.quantity * (detail.product_unit_id.exchange_value || 1);
+
     if (!salesAnalysis[productId]) {
       salesAnalysis[productId] = {
         product_id: productId,
@@ -928,17 +935,17 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
         total_sold: 0,
         order_count: 0,
         revenue: 0,
-        sales_history: []
+        sales_history: [],
       };
     }
-    
+
     salesAnalysis[productId].total_sold += baseQuantity;
     salesAnalysis[productId].order_count += 1;
     salesAnalysis[productId].revenue += detail.total_price || 0;
     salesAnalysis[productId].sales_history.push({
       date: detail.createdAt,
       quantity: baseQuantity,
-      price: detail.unit_price
+      price: detail.unit_price,
     });
   });
 
@@ -947,12 +954,13 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
   Object.keys(salesAnalysis).forEach((productId) => {
     const data = salesAnalysis[productId];
     data.sales_velocity = data.total_sold / daysAnalyzed; // units per day
-    data.turnover_rate = data.total_stock > 0 ? data.total_sold / data.total_stock : 0;
+    data.turnover_rate =
+      data.total_stock > 0 ? data.total_sold / data.total_stock : 0;
   });
 
   // Combine sales analysis with waste analysis
   const combinedAnalysis = {};
-  
+
   // Add all products from sales analysis
   Object.keys(salesAnalysis).forEach((productId) => {
     combinedAnalysis[productId] = {
@@ -963,7 +971,7 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
       total_imported: productAnalysis[productId]?.total_imported || 0,
     };
   });
-  
+
   // Add products that only have waste data (not sold but have stock issues)
   Object.keys(productAnalysis).forEach((productId) => {
     if (!combinedAnalysis[productId]) {
@@ -973,7 +981,7 @@ exports.getSmartReplenishmentSuggestions = async (options = {}) => {
         order_count: 0,
         revenue: 0,
         sales_velocity: 0,
-        turnover_rate: 0
+        turnover_rate: 0,
       };
     }
   });
@@ -1048,7 +1056,7 @@ NGUYÊN TẮC ƯU TIÊN:
 
 Chỉ trả về JSON, không có text thừa.
 
-Khoảng thời gian phân tích: ${dateRange.created_at ? `Từ ${new Date(dateRange.created_at.$gte).toLocaleDateString('vi-VN')} đến ${dateRange.created_at.$lte ? new Date(dateRange.created_at.$lte).toLocaleDateString('vi-VN') : 'hiện tại'}` : 'Toàn bộ lịch sử'}
+Khoảng thời gian phân tích: ${dateRange.created_at ? `Từ ${new Date(dateRange.created_at.$gte).toLocaleDateString("vi-VN")} đến ${dateRange.created_at.$lte ? new Date(dateRange.created_at.$lte).toLocaleDateString("vi-VN") : "hiện tại"}` : "Toàn bộ lịch sử"}
 Số ngày phân tích: ${daysAnalyzed}
 Số lô hàng phân tích: ${allBatches.length}
 Số đơn hàng phân tích: ${orderDetails.length}
@@ -1069,23 +1077,25 @@ Số sản phẩm phân tích: ${productsForAnalysis.length}`;
           top_sellers: Object.values(salesAnalysis)
             .sort((a, b) => b.sales_velocity - a.sales_velocity)
             .slice(0, 10)
-            .map(p => ({
+            .map((p) => ({
               product_name: p.product_name,
               total_sold: p.total_sold,
               sales_velocity: p.sales_velocity.toFixed(2),
-              current_stock: p.total_stock
-            }))
+              current_stock: p.total_stock,
+            })),
         },
         waste_summary: {
-          total_products_with_waste: Object.values(productAnalysis).filter(p => p.waste_rate > 0).length,
+          total_products_with_waste: Object.values(productAnalysis).filter(
+            (p) => p.waste_rate > 0,
+          ).length,
           high_waste_products: Object.values(productAnalysis)
-            .filter(p => p.waste_rate > 0.1)
-            .map(p => ({
+            .filter((p) => p.waste_rate > 0.1)
+            .map((p) => ({
               product_name: p.product_name,
-              waste_rate: (p.waste_rate * 100).toFixed(1) + '%',
+              waste_rate: (p.waste_rate * 100).toFixed(1) + "%",
               total_expired: p.total_expired,
-              total_rejected: p.total_rejected
-            }))
+              total_rejected: p.total_rejected,
+            })),
         },
         date_range: {
           from: dateRange.created_at?.$gte || null,
@@ -1114,8 +1124,9 @@ Số sản phẩm phân tích: ${productsForAnalysis.length}`;
 
       if (p.sales_velocity > 0) {
         // Product is selling
-        const daysOfStock = p.total_stock > 0 ? p.total_stock / p.sales_velocity : 0;
-        
+        const daysOfStock =
+          p.total_stock > 0 ? p.total_stock / p.sales_velocity : 0;
+
         if (daysOfStock < 7) {
           // Low stock, high priority
           recommendedQty = Math.ceil(p.sales_velocity * 21); // 3 weeks supply
@@ -1166,7 +1177,10 @@ Số sản phẩm phân tích: ${productsForAnalysis.length}`;
         waste_rate: p.waste_rate,
         priority: priority,
         action: action,
-        warning: p.waste_rate > 0.2 ? "Sản phẩm có tỷ lệ hao hụt rất cao, cần xem xét lại chiến lược nhập hàng" : null,
+        warning:
+          p.waste_rate > 0.2
+            ? "Sản phẩm có tỷ lệ hao hụt rất cao, cần xem xét lại chiến lược nhập hàng"
+            : null,
       };
     });
 
@@ -1179,22 +1193,22 @@ Số sản phẩm phân tích: ${productsForAnalysis.length}`;
           key_insights: [
             "AI tạm thời không khả dụng, sử dụng gợi ý dựa trên quy tắc",
             `Phân tích ${productsForAnalysis.length} sản phẩm dựa trên dữ liệu bán hàng và tồn kho`,
-            `${Object.keys(salesAnalysis).length} sản phẩm có doanh số trong ${daysAnalyzed} ngày qua`
+            `${Object.keys(salesAnalysis).length} sản phẩm có doanh số trong ${daysAnalyzed} ngày qua`,
           ],
           best_practices: [
             "Ưu tiên nhập hàng cho sản phẩm bán chạy với tồn kho thấp",
             "Giảm hoặc ngưng nhập sản phẩm có tỷ lệ hao hụt cao",
             "Theo dõi hạn sử dụng sản phẩm thường xuyên",
-            "Nhập hàng dựa trên tốc độ bán thực tế, không nhập quá mức"
+            "Nhập hàng dựa trên tốc độ bán thực tế, không nhập quá mức",
           ],
           top_selling_products: Object.values(salesAnalysis)
             .sort((a, b) => b.sales_velocity - a.sales_velocity)
             .slice(0, 5)
-            .map(p => p.product_name),
+            .map((p) => p.product_name),
           products_to_avoid: Object.values(productAnalysis)
-            .filter(p => p.waste_rate > 0.2)
+            .filter((p) => p.waste_rate > 0.2)
             .slice(0, 5)
-            .map(p => p.product_name)
+            .map((p) => p.product_name),
         },
         product_analysis: productsForAnalysis,
         sales_summary: {
@@ -1203,23 +1217,25 @@ Số sản phẩm phân tích: ${productsForAnalysis.length}`;
           top_sellers: Object.values(salesAnalysis)
             .sort((a, b) => b.sales_velocity - a.sales_velocity)
             .slice(0, 10)
-            .map(p => ({
+            .map((p) => ({
               product_name: p.product_name,
               total_sold: p.total_sold,
               sales_velocity: p.sales_velocity.toFixed(2),
-              current_stock: p.total_stock
-            }))
+              current_stock: p.total_stock,
+            })),
         },
         waste_summary: {
-          total_products_with_waste: Object.values(productAnalysis).filter(p => p.waste_rate > 0).length,
+          total_products_with_waste: Object.values(productAnalysis).filter(
+            (p) => p.waste_rate > 0,
+          ).length,
           high_waste_products: Object.values(productAnalysis)
-            .filter(p => p.waste_rate > 0.1)
-            .map(p => ({
+            .filter((p) => p.waste_rate > 0.1)
+            .map((p) => ({
               product_name: p.product_name,
-              waste_rate: (p.waste_rate * 100).toFixed(1) + '%',
+              waste_rate: (p.waste_rate * 100).toFixed(1) + "%",
               total_expired: p.total_expired,
-              total_rejected: p.total_rejected
-            }))
+              total_rejected: p.total_rejected,
+            })),
         },
         date_range: {
           from: dateRange.created_at?.$gte || null,
