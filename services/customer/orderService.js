@@ -14,10 +14,13 @@ const mongoose = require("mongoose");
  * Remove Vietnamese diacritics for search
  */
 const removeVietnameseDiacritics = (str) => {
-  if (!str) return "";
-  return str
+  if (str === null || str === undefined) return "";
+  return String(str)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(
+      /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g,
+      "",
+    )
     .replace(/đ/g, "d")
     .replace(/Đ/g, "D")
     .toLowerCase();
@@ -109,10 +112,14 @@ class OrderService {
           batchItem.rescue_discount_percentage > 0
         ) {
           rescuePricing.isRescuePricing = true;
-          rescuePricing.discountPercentage = batchItem.rescue_discount_percentage;
+          rescuePricing.discountPercentage =
+            batchItem.rescue_discount_percentage;
 
           // Calculate discounted price (rounded)
-          finalUnitPrice = Math.round(productUnit.price * (100 - batchItem.rescue_discount_percentage) / 100);
+          finalUnitPrice = Math.round(
+            (productUnit.price * (100 - batchItem.rescue_discount_percentage)) /
+              100,
+          );
           rescuePricing.discountAmount = productUnit.price - finalUnitPrice;
         } else if (
           !batchItem.rescue_pricing_enabled &&
@@ -175,7 +182,7 @@ class OrderService {
         // Check minimum order value
         if (totalAmount < coupon.min_order_value) {
           throw new Error(
-            `Đơn hàng tối thiểu ${coupon.min_order_value.toLocaleString("vi-VN")}đ để sử dụng mã này`
+            `Đơn hàng tối thiểu ${coupon.min_order_value.toLocaleString("vi-VN")}đ để sử dụng mã này`,
           );
         }
 
@@ -188,9 +195,7 @@ class OrderService {
           });
 
           if (!userCoupon) {
-            throw new Error(
-              "Bạn không sở hữu mã giảm giá này hoặc đã sử dụng"
-            );
+            throw new Error("Bạn không sở hữu mã giảm giá này hoặc đã sử dụng");
           }
 
           appliedUserCoupon = userCoupon;
@@ -199,7 +204,7 @@ class OrderService {
         // Calculate discount
         if (coupon.discount_type === "percent") {
           couponDiscount = Math.round(
-            (totalAmount * coupon.discount_value) / 100
+            (totalAmount * coupon.discount_value) / 100,
           );
           // Apply max discount cap
           if (
@@ -272,7 +277,9 @@ class OrderService {
 
         const batchItem = batchDoc.items.id(item.batch_item_id);
         if (!batchItem) {
-          throw new Error(`Không tìm thấy sản phẩm trong lô ${item.product_batch_id}`);
+          throw new Error(
+            `Không tìm thấy sản phẩm trong lô ${item.product_batch_id}`,
+          );
         }
 
         batchItem.current_quantity = Math.max(
@@ -391,10 +398,12 @@ class OrderService {
       throw new Error("Order not found");
     }
 
-    const orderDetails = await OrderDetail.find({ order_id: orderId }).populate({
-      path: "product_unit_id",
-      populate: { path: "product_id unit_id" },
-    });
+    const orderDetails = await OrderDetail.find({ order_id: orderId }).populate(
+      {
+        path: "product_unit_id",
+        populate: { path: "product_id unit_id" },
+      },
+    );
 
     if (!orderDetails.length) {
       throw new Error("Order has no items to reorder");
@@ -421,7 +430,12 @@ class OrderService {
           reason: "",
         };
 
-        if (!productUnit || productUnit.is_active === false || !product || !unit) {
+        if (
+          !productUnit ||
+          productUnit.is_active === false ||
+          !product ||
+          !unit
+        ) {
           availability = {
             isAvailable: false,
             reason: "Sản phẩm không còn kinh doanh",
@@ -528,7 +542,8 @@ class OrderService {
       summary: {
         total: items.length,
         available: items.filter((item) => item.availability.isAvailable).length,
-        unavailable: items.filter((item) => !item.availability.isAvailable).length,
+        unavailable: items.filter((item) => !item.availability.isAvailable)
+          .length,
       },
     };
   }
@@ -540,10 +555,12 @@ class OrderService {
       throw new Error("Order not found");
     }
 
-    const orderDetails = await OrderDetail.find({ order_id: orderId }).populate({
-      path: "product_unit_id",
-      populate: { path: "product_id unit_id" },
-    });
+    const orderDetails = await OrderDetail.find({ order_id: orderId }).populate(
+      {
+        path: "product_unit_id",
+        populate: { path: "product_id unit_id" },
+      },
+    );
 
     if (!orderDetails.length) {
       throw new Error("Order has no items to reorder");
@@ -560,7 +577,8 @@ class OrderService {
         skippedItems.push({
           order_detail_id: detail._id,
           product_unit_id: productUnit?._id || detail.product_unit_id,
-          product_name: productUnit?.product_id?.name || "Sản phẩm không xác định",
+          product_name:
+            productUnit?.product_id?.name || "Sản phẩm không xác định",
           quantity,
           reason: "Sản phẩm không còn kinh doanh",
         });
@@ -679,7 +697,8 @@ class OrderService {
     const query = { user_id: userId };
 
     // Mã đơn: tìm chuỗi con (regex, không phân biệt hoa thường)
-    const orderCodeStr = typeof filters.order_code === "string" ? filters.order_code.trim() : "";
+    const orderCodeStr =
+      typeof filters.order_code === "string" ? filters.order_code.trim() : "";
     if (orderCodeStr.length > 0) {
       const escaped = orderCodeStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       query.order_code = { $regex: escaped, $options: "i" };
@@ -700,9 +719,18 @@ class OrderService {
     }
 
     // Trạng thái đơn: chỉ thêm vào query khi khác "all"
-    const status = typeof filters.order_status === "string" ? filters.order_status.trim() : "";
+    const status =
+      typeof filters.order_status === "string"
+        ? filters.order_status.trim()
+        : "";
     if (status && status !== "all") {
-      const validStatuses = ["pending", "processing", "completed", "cancelled", "returned"];
+      const validStatuses = [
+        "pending",
+        "processing",
+        "completed",
+        "cancelled",
+        "returned",
+      ];
       if (validStatuses.includes(status)) {
         query.order_status = status;
       }
