@@ -67,24 +67,37 @@ const productService = {
           product.max_price = 0;
         }
 
-        // Check for rescue pricing - find max discount available for this product
+        // Find max effective discount available for this product (rescue or manual)
         product.maxRescueDiscount = 0;
         try {
           const batches = await ProductBatch.find({
             "items.product_id": product._id,
-            "items.rescue_pricing_active": true,
             "items.status": "onsale",
             is_deleted: false,
           }).lean();
 
           for (let batch of batches) {
             for (let item of batch.items) {
+              let discountPercentage = 0;
+
+              if (
+                item.rescue_pricing_enabled &&
+                item.rescue_pricing_active &&
+                item.rescue_discount_percentage > 0
+              ) {
+                discountPercentage = item.rescue_discount_percentage;
+              } else if (
+                !item.rescue_pricing_enabled &&
+                item.manual_discount_percentage > 0
+              ) {
+                discountPercentage = item.manual_discount_percentage;
+              }
+
               if (
                 item.product_id.toString() === product._id.toString() &&
-                item.rescue_pricing_active &&
-                item.rescue_discount_percentage > product.maxRescueDiscount
+                discountPercentage > product.maxRescueDiscount
               ) {
-                product.maxRescueDiscount = item.rescue_discount_percentage;
+                product.maxRescueDiscount = discountPercentage;
               }
             }
           }
@@ -180,7 +193,7 @@ const productService = {
           is_deleted: false,
         }).lean();
 
-        // Sum up current_quantity and find max rescue discount
+        // Sum up current_quantity and find max effective discount
         let totalStock = 0;
         let maxRescueDiscount = 0;
         
@@ -192,10 +205,23 @@ const productService = {
               item.status === "onsale"
             ) {
               totalStock += item.current_quantity;
-              
-              // Check rescue pricing
-              if (item.rescue_pricing_active && item.rescue_discount_percentage > maxRescueDiscount) {
-                maxRescueDiscount = item.rescue_discount_percentage;
+
+              let discountPercentage = 0;
+              if (
+                item.rescue_pricing_enabled &&
+                item.rescue_pricing_active &&
+                item.rescue_discount_percentage > 0
+              ) {
+                discountPercentage = item.rescue_discount_percentage;
+              } else if (
+                !item.rescue_pricing_enabled &&
+                item.manual_discount_percentage > 0
+              ) {
+                discountPercentage = item.manual_discount_percentage;
+              }
+
+              if (discountPercentage > maxRescueDiscount) {
+                maxRescueDiscount = discountPercentage;
               }
             }
           }

@@ -54,7 +54,6 @@ exports.checkAndNotifyRescuePricing = async () => {
     console.log("🔍 Starting rescue pricing check...");
 
     const now = new Date();
-    const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     // Find all active batches
     const batches = await ProductBatch.find({
@@ -62,14 +61,61 @@ exports.checkAndNotifyRescuePricing = async () => {
     }).populate("items.product_id items.unit_id");
 
     let notificationCount = 0;
+  let expiredStatusUpdatedCount = 0;
     const notifications = [];
 
     for (const batch of batches) {
       let batchUpdated = false;
 
       for (const item of batch.items) {
-        // Skip if item is sold, rejected, or expired
-        if (["sold", "rejected", "outdate"].includes(item.status)) {
+        const expiryDate = item.expiry_date ? new Date(item.expiry_date) : null;
+        const manufactureDate = item.manufacture_date
+          ? new Date(item.manufacture_date)
+          : null;
+        const daysUntilExpiry = expiryDate
+          ? Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24))
+          : null;
+
+        // SOLD is a terminal status: never auto-change to outdate or any other status.
+        if (item.status === "sold") {
+          continue;
+        }
+
+        // Always keep date_status synchronized with expiry date.
+        if (daysUntilExpiry !== null) {
+          const nextDateStatus =
+            daysUntilExpiry < 0
+              ? "expired"
+              : daysUntilExpiry <= 30
+                ? "near_expiry"
+                : "active";
+
+          if (item.date_status !== nextDateStatus) {
+            item.date_status = nextDateStatus;
+            batchUpdated = true;
+          }
+        }
+
+        // Auto-change expired items to outdate and turn off rescue pricing.
+        if (daysUntilExpiry !== null && daysUntilExpiry < 0) {
+          const needsExpiredUpdate =
+            item.status !== "outdate" ||
+            item.rescue_pricing_active ||
+            (item.rescue_discount_percentage || 0) !== 0;
+
+          if (needsExpiredUpdate) {
+            item.status = "outdate";
+            item.rescue_pricing_active = false;
+            item.rescue_discount_percentage = 0;
+            batchUpdated = true;
+            expiredStatusUpdatedCount++;
+          }
+
+          continue;
+        }
+
+        // Skip rejected after handling expiry sync above.
+        if (["rejected"].includes(item.status)) {
           continue;
         }
 
@@ -78,11 +124,9 @@ exports.checkAndNotifyRescuePricing = async () => {
           continue;
         }
 
-        const manufactureDate = new Date(item.manufacture_date);
-        const expiryDate = new Date(item.expiry_date);
-        const daysUntilExpiry = Math.ceil(
-          (expiryDate - now) / (1000 * 60 * 60 * 24)
-        );
+        if (!manufactureDate || !expiryDate) {
+          continue;
+        }
 
         // Calculate discount based on shelf life percentage
         const discountPercentage = calculateRescueDiscount(
@@ -121,13 +165,6 @@ exports.checkAndNotifyRescuePricing = async () => {
           }
 
           batchUpdated = true;
-        } else if (daysUntilExpiry < 1) {
-          // Item has expired, deactivate rescue pricing
-          if (item.rescue_pricing_active) {
-            item.rescue_pricing_active = false;
-            item.rescue_discount_percentage = 0;
-            batchUpdated = true;
-          }
         }
       }
 
@@ -143,12 +180,13 @@ exports.checkAndNotifyRescuePricing = async () => {
     }
 
     console.log(
-      `✅ Rescue pricing check completed. ${notificationCount} notifications generated.`
+      `✅ Rescue pricing check completed. ${notificationCount} notifications generated, ${expiredStatusUpdatedCount} expired items moved to outdate.`
     );
 
     return {
       success: true,
       notificationCount,
+      expiredStatusUpdatedCount,
       notifications,
     };
   } catch (error) {

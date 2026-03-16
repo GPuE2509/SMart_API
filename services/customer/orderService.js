@@ -1,5 +1,6 @@
 const Order = require("../../models/Order");
 const OrderDetail = require("../../models/OrderDetail");
+const CartItem = require("../../models/CartItem");
 const ProductBatch = require("../../models/ProductBatch");
 const ProductUnit = require("../../models/ProductUnit");
 const Product = require("../../models/Product");
@@ -93,7 +94,7 @@ class OrderService {
           );
         }
 
-        // Apply rescue pricing if available
+        // Apply active discount policy: rescue pricing (auto) or manual discount.
         let finalUnitPrice = productUnit.price;
         let rescuePricing = {
           isRescuePricing: false,
@@ -102,13 +103,25 @@ class OrderService {
           discountAmount: 0,
         };
 
-        if (batchItem.rescue_pricing_active && batchItem.rescue_discount_percentage > 0) {
+        if (
+          batchItem.rescue_pricing_enabled &&
+          batchItem.rescue_pricing_active &&
+          batchItem.rescue_discount_percentage > 0
+        ) {
           rescuePricing.isRescuePricing = true;
           rescuePricing.discountPercentage = batchItem.rescue_discount_percentage;
-          
+
           // Calculate discounted price (rounded)
           finalUnitPrice = Math.round(productUnit.price * (100 - batchItem.rescue_discount_percentage) / 100);
           rescuePricing.discountAmount = productUnit.price - finalUnitPrice;
+        } else if (
+          !batchItem.rescue_pricing_enabled &&
+          batchItem.manual_discount_percentage > 0
+        ) {
+          const manualDiscount = batchItem.manual_discount_percentage;
+          finalUnitPrice = Math.round(
+            (productUnit.price * (100 - manualDiscount)) / 100,
+          );
         }
 
         const itemTotal = Math.round(finalUnitPrice * item.quantity);
@@ -251,16 +264,29 @@ class OrderService {
         });
         await orderDetail.save();
 
-        // Update batch item quantity (nested array structure)
-        await ProductBatch.updateOne(
-          {
-            _id: item.product_batch_id,
-            "items._id": item.batch_item_id,
-          },
-          {
-            $inc: { "items.$.current_quantity": -item.quantity },
-          },
+        // Update batch item quantity and mark as sold when stock is fully consumed.
+        const batchDoc = await ProductBatch.findById(item.product_batch_id);
+        if (!batchDoc) {
+          throw new Error(`Không tìm thấy lô hàng ${item.product_batch_id}`);
+        }
+
+        const batchItem = batchDoc.items.id(item.batch_item_id);
+        if (!batchItem) {
+          throw new Error(`Không tìm thấy sản phẩm trong lô ${item.product_batch_id}`);
+        }
+
+        batchItem.current_quantity = Math.max(
+          0,
+          (batchItem.current_quantity || 0) - item.quantity,
         );
+
+        if (batchItem.current_quantity === 0) {
+          batchItem.status = "sold";
+          batchItem.rescue_pricing_active = false;
+          batchItem.rescue_discount_percentage = 0;
+        }
+
+        await batchDoc.save();
 
         // Update product total_stock (convert to base unit)
         const product = await Product.findById(item.product_id);
@@ -356,6 +382,250 @@ class OrderService {
     );
 
     return { order, orderDetails };
+  }
+
+  async getReorderPreview(userId, orderId) {
+    const order = await Order.findOne({ _id: orderId, user_id: userId });
+
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    const orderDetails = await OrderDetail.find({ order_id: orderId }).populate({
+      path: "product_unit_id",
+      populate: { path: "product_id unit_id" },
+    });
+
+    if (!orderDetails.length) {
+      throw new Error("Order has no items to reorder");
+    }
+
+    const items = await Promise.all(
+      orderDetails.map(async (detail) => {
+        const productUnit = detail.product_unit_id;
+        const product = productUnit?.product_id || null;
+        const unit = productUnit?.unit_id || null;
+        const previousQuantity = detail.quantity || 1;
+        let availableQuantity = 0;
+
+        let rescuePricing = {
+          isAvailable: false,
+          originalPrice: productUnit?.price || detail.unit_price || 0,
+          discountPercentage: 0,
+          discountedPrice: productUnit?.price || detail.unit_price || 0,
+          savings: 0,
+        };
+
+        let availability = {
+          isAvailable: true,
+          reason: "",
+        };
+
+        if (!productUnit || productUnit.is_active === false || !product || !unit) {
+          availability = {
+            isAvailable: false,
+            reason: "Sản phẩm không còn kinh doanh",
+          };
+        } else {
+          const batch = await ProductBatch.findOne({
+            "items.product_id": product._id,
+            "items.unit_id": unit._id,
+            "items.current_quantity": { $gt: 0 },
+            "items.status": "onsale",
+            is_deleted: false,
+          }).sort({ created_at: 1 });
+
+          if (!batch) {
+            availability = {
+              isAvailable: false,
+              reason: "Không đủ tồn kho với số lượng đã mua trước đó",
+            };
+          } else {
+            const batchItem = batch.items.find(
+              (item) =>
+                item.product_id.toString() === product._id.toString() &&
+                item.unit_id.toString() === unit._id.toString() &&
+                item.current_quantity > 0 &&
+                item.status === "onsale",
+            );
+
+            if (!batchItem) {
+              availability = {
+                isAvailable: false,
+                reason: "Không đủ tồn kho với số lượng đã mua trước đó",
+              };
+            } else {
+              availableQuantity = batchItem.current_quantity || 0;
+
+              let discountPercentage = 0;
+              if (
+                batchItem.rescue_pricing_enabled &&
+                batchItem.rescue_pricing_active &&
+                batchItem.rescue_discount_percentage > 0
+              ) {
+                discountPercentage = batchItem.rescue_discount_percentage;
+              } else if (
+                !batchItem.rescue_pricing_enabled &&
+                batchItem.manual_discount_percentage > 0
+              ) {
+                discountPercentage = batchItem.manual_discount_percentage;
+              }
+
+              if (discountPercentage > 0) {
+                const originalPrice = productUnit.price;
+                const discountedPrice = Math.round(
+                  (originalPrice * (100 - discountPercentage)) / 100,
+                );
+
+                rescuePricing = {
+                  isAvailable: true,
+                  originalPrice,
+                  discountPercentage,
+                  discountedPrice,
+                  savings:
+                    (originalPrice - discountedPrice) *
+                    Math.min(previousQuantity, availableQuantity),
+                };
+              }
+
+              if (availableQuantity < previousQuantity) {
+                availability = {
+                  isAvailable: true,
+                  reason: `Hiện chỉ còn ${availableQuantity} sản phẩm khả dụng`,
+                };
+              }
+            }
+          }
+        }
+
+        const selectedQuantity = availableQuantity
+          ? Math.min(previousQuantity, availableQuantity)
+          : previousQuantity;
+
+        return {
+          id: detail._id,
+          order_detail_id: detail._id,
+          product_unit_id: productUnit?._id || null,
+          quantity: selectedQuantity,
+          previousQuantity,
+          availableQuantity,
+          productUnit,
+          product,
+          unit,
+          rescuePricing,
+          availability,
+        };
+      }),
+    );
+
+    return {
+      order: {
+        _id: order._id,
+        order_code: order.order_code,
+        created_at: order.created_at,
+      },
+      items,
+      summary: {
+        total: items.length,
+        available: items.filter((item) => item.availability.isAvailable).length,
+        unavailable: items.filter((item) => !item.availability.isAvailable).length,
+      },
+    };
+  }
+
+  // Reorder: add all valid items of an old order back to cart
+  async reorderOrder(userId, orderId) {
+    const order = await Order.findOne({ _id: orderId, user_id: userId });
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    const orderDetails = await OrderDetail.find({ order_id: orderId }).populate({
+      path: "product_unit_id",
+      populate: { path: "product_id unit_id" },
+    });
+
+    if (!orderDetails.length) {
+      throw new Error("Order has no items to reorder");
+    }
+
+    const addedItems = [];
+    const skippedItems = [];
+
+    for (const detail of orderDetails) {
+      const productUnit = detail.product_unit_id;
+      const quantity = detail.quantity || 1;
+
+      if (!productUnit || productUnit.is_active === false) {
+        skippedItems.push({
+          order_detail_id: detail._id,
+          product_unit_id: productUnit?._id || detail.product_unit_id,
+          product_name: productUnit?.product_id?.name || "Sản phẩm không xác định",
+          quantity,
+          reason: "Sản phẩm không còn kinh doanh",
+        });
+        continue;
+      }
+
+      // Validate current inventory before adding to cart.
+      const batch = await ProductBatch.findOne({
+        "items.product_id": productUnit.product_id?._id,
+        "items.unit_id": productUnit.unit_id?._id,
+        "items.current_quantity": { $gte: quantity },
+        "items.status": "onsale",
+        is_deleted: false,
+      }).sort({ created_at: 1 });
+
+      if (!batch) {
+        skippedItems.push({
+          order_detail_id: detail._id,
+          product_unit_id: productUnit._id,
+          product_name: productUnit.product_id?.name || "Sản phẩm",
+          quantity,
+          reason: "Sản phẩm hiện không đủ tồn kho",
+        });
+        continue;
+      }
+
+      let cartItem = await CartItem.findOne({
+        user_id: userId,
+        product_unit_id: productUnit._id,
+      });
+
+      if (cartItem) {
+        cartItem.quantity += quantity;
+        await cartItem.save();
+      } else {
+        cartItem = await CartItem.create({
+          user_id: userId,
+          product_unit_id: productUnit._id,
+          quantity,
+        });
+      }
+
+      addedItems.push({
+        cart_item_id: cartItem._id,
+        product_unit_id: productUnit._id,
+        product_name: productUnit.product_id?.name || "Sản phẩm",
+        quantity,
+      });
+    }
+
+    const message =
+      skippedItems.length > 0
+        ? `Đã thêm ${addedItems.length} sản phẩm vào giỏ hàng, ${skippedItems.length} sản phẩm không thể thêm.`
+        : `Đã thêm ${addedItems.length} sản phẩm vào giỏ hàng.`;
+
+    return {
+      addedItems,
+      skippedItems,
+      summary: {
+        total: orderDetails.length,
+        added: addedItems.length,
+        skipped: skippedItems.length,
+      },
+      message,
+    };
   }
 
   // Check and update PayOS payment status

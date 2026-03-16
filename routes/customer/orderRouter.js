@@ -16,6 +16,16 @@ router.post(
 // Get user orders
 router.get("/", authenticateUser, orderController.getUserOrders);
 
+// Preview reorder items with current availability
+router.get(
+  "/:orderId/reorder-preview",
+  authenticateUser,
+  orderController.getReorderPreview,
+);
+
+// Reorder an old order
+router.post("/:orderId/reorder", authenticateUser, orderController.reorderOrder);
+
 // Get order by ID
 router.get("/:orderId", authenticateUser, orderController.getOrderById);
 
