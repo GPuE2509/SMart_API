@@ -524,81 +524,7 @@ exports.getPrintLabel = async (req, res) => {
     const { batchId, itemId } = req.params;
     const responseFormat = String(req.query.format || "json").toLowerCase();
 
-    const ProductBatch = require('../../models/ProductBatch');
-    const ProductUnit = require('../../models/ProductUnit');
-    
-    const batch = await ProductBatch.findById(batchId).populate(
-      'items.product_id items.unit_id'
-    );
-
-    if (!batch) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy lô hàng',
-      });
-    }
-
-    const item = batch.items.id(itemId);
-
-    if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy sản phẩm trong lô hàng',
-      });
-    }
-
-    const product = item.product_id;
-    const unit = item.unit_id;
-
-    // Find ProductUnit to get selling price
-    const productUnit = await ProductUnit.findOne({
-      product_id: product._id,
-      unit_id: unit._id,
-      is_active: true
-    });
-
-    if (!productUnit) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy thông tin giá bán của sản phẩm',
-      });
-    }
-
-    // Calculate final price with rescue discount
-    let originalPrice = productUnit.price || 0;
-    let finalPrice = originalPrice;
-    let discountAmount = 0;
-    let discountPercentage = 0;
-    let isAutoDiscount = false;
-
-    // Use rescue pricing (auto) if enabled, otherwise use manual discount
-    if (item.rescue_pricing_enabled && item.rescue_pricing_active && item.rescue_discount_percentage > 0) {
-      discountPercentage = item.rescue_discount_percentage;
-      isAutoDiscount = true;
-    } else if (!item.rescue_pricing_enabled && item.manual_discount_percentage > 0) {
-      discountPercentage = item.manual_discount_percentage;
-      isAutoDiscount = false;
-    }
-
-    if (discountPercentage > 0) {
-      discountAmount = (originalPrice * discountPercentage) / 100;
-      finalPrice = originalPrice - discountAmount;
-    }
-
-    const labelData = {
-      batchCode: batch._id,
-      productName: product.name,
-      unitName: unit.name,
-      originalPrice: originalPrice,
-      discountPercentage: discountPercentage,
-      discountAmount,
-      finalPrice,
-      expiryDate: item.expiry_date,
-      rescuePricing: discountPercentage > 0, // Has any discount (auto or manual)
-      manualDiscount: !item.rescue_pricing_enabled && item.manual_discount_percentage > 0,
-      isAutoDiscount: isAutoDiscount,
-      importPrice: item.import_price || 0, // Giá nhập (để tham khảo)
-    };
+    const labelData = await productBatchService.getPrintLabelData(batchId, itemId);
 
     if (responseFormat === "html") {
       const parsedCopies = Number.parseInt(req.query.copies, 10);
@@ -608,7 +534,7 @@ exports.getPrintLabel = async (req, res) => {
 
       const html = buildPrintLabelHtml(labelData, {
         copies,
-        title: `Nhan Gia - ${product.name || "San Pham"}`,
+        title: `Nhan Gia - ${labelData.productName || "San Pham"}`,
       });
 
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -621,6 +547,13 @@ exports.getPrintLabel = async (req, res) => {
       data: labelData,
     });
   } catch (error) {
+    if (error.statusCode === 404) {
+      return res.status(404).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Không thể tạo nhãn in',
