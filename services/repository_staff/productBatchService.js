@@ -1238,3 +1238,74 @@ Số sản phẩm phân tích: ${productsForAnalysis.length}`;
     };
   }
 };
+
+/**
+ * Get label data for a batch item (for printing)
+ * Returns structured label data; does not build HTML
+ */
+exports.getPrintLabelData = async (batchId, itemId) => {
+  const batch = await ProductBatch.findById(batchId).populate(
+    'items.product_id items.unit_id'
+  );
+
+  if (!batch) {
+    const err = new Error('Không tìm thấy lô hàng');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const item = batch.items.id(itemId);
+
+  if (!item) {
+    const err = new Error('Không tìm thấy sản phẩm trong lô hàng');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const product = item.product_id;
+  const unit = item.unit_id;
+
+  const productUnit = await ProductUnit.findOne({
+    product_id: product._id,
+    unit_id: unit._id,
+    is_active: true,
+  });
+
+  if (!productUnit) {
+    const err = new Error('Không tìm thấy thông tin giá bán của sản phẩm');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const originalPrice = productUnit.price || 0;
+  let finalPrice = originalPrice;
+  let discountPercentage = 0;
+  let isAutoDiscount = false;
+
+  if (item.rescue_pricing_enabled && item.rescue_pricing_active && item.rescue_discount_percentage > 0) {
+    discountPercentage = item.rescue_discount_percentage;
+    isAutoDiscount = true;
+  } else if (!item.rescue_pricing_enabled && item.manual_discount_percentage > 0) {
+    discountPercentage = item.manual_discount_percentage;
+    isAutoDiscount = false;
+  }
+
+  if (discountPercentage > 0) {
+    finalPrice = originalPrice - (originalPrice * discountPercentage) / 100;
+  }
+
+  return {
+    batchCode: batch._id,
+    productName: product.name,
+    unitName: unit.name,
+    originalPrice,
+    discountPercentage,
+    discountAmount: originalPrice - finalPrice,
+    finalPrice,
+    expiryDate: item.expiry_date,
+    rescuePricing: discountPercentage > 0,
+    manualDiscount: !item.rescue_pricing_enabled && item.manual_discount_percentage > 0,
+    isAutoDiscount,
+    importPrice: item.import_price || 0,
+  };
+};

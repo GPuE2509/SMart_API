@@ -1,6 +1,34 @@
 const { CartItem, ProductUnit, Product, RecipeIngredient, Recipe, ProductBatch } = require("../../models");
 
 class CartService {
+  async getAvailableBatchQuantity(productId, unitId) {
+    const batches = await ProductBatch.find({
+      is_deleted: false,
+      items: {
+        $elemMatch: {
+          product_id: productId,
+          unit_id: unitId,
+          status: "onsale",
+          current_quantity: { $gt: 0 },
+        },
+      },
+    }).select("items");
+
+    return batches.reduce((sum, batch) => {
+      const batchItemQuantity = batch.items
+        .filter(
+          (item) =>
+            item.product_id.toString() === productId.toString() &&
+            item.unit_id.toString() === unitId.toString() &&
+            item.status === "onsale" &&
+            item.current_quantity > 0,
+        )
+        .reduce((itemSum, item) => itemSum + item.current_quantity, 0);
+
+      return sum + batchItemQuantity;
+    }, 0);
+  }
+
   /**
    * Add item to cart
    */
@@ -20,6 +48,19 @@ class CartService {
       user_id: userId,
       product_unit_id: productUnitId,
     });
+
+    const currentCartQuantity = cartItem ? cartItem.quantity : 0;
+    const nextQuantity = currentCartQuantity + quantity;
+    const availableBatchQuantity = await this.getAvailableBatchQuantity(
+      productUnit.product_id,
+      productUnit.unit_id,
+    );
+
+    if (availableBatchQuantity < nextQuantity) {
+      throw new Error(
+        `Sản phẩm không đủ tồn kho trong lô bán (còn ${availableBatchQuantity}, yêu cầu ${nextQuantity})`,
+      );
+    }
 
     if (cartItem) {
       // Update quantity
@@ -146,6 +187,26 @@ class CartService {
       return this.removeFromCart(userId, cartItemId);
     }
 
+    const existingItem = await CartItem.findOne({
+      _id: cartItemId,
+      user_id: userId,
+    }).populate("product_unit_id");
+
+    if (!existingItem) {
+      throw new Error("Không tìm thấy sản phẩm trong giỏ");
+    }
+
+    const availableBatchQuantity = await this.getAvailableBatchQuantity(
+      existingItem.product_unit_id.product_id,
+      existingItem.product_unit_id.unit_id,
+    );
+
+    if (availableBatchQuantity < quantity) {
+      throw new Error(
+        `Sản phẩm không đủ tồn kho trong lô bán (còn ${availableBatchQuantity}, yêu cầu ${quantity})`,
+      );
+    }
+
     const cartItem = await CartItem.findOneAndUpdate(
       { _id: cartItemId, user_id: userId },
       { quantity },
@@ -208,24 +269,36 @@ class CartService {
           continue;
         }
 
+        // Check stock availability
+        const product = ingredient.product_id;
+        const quantity = ingredient.quantity_needed || 1;
+
+        if (!product.total_stock || product.total_stock <= 0) {
+          errors.push({
+            message: `Sản phẩm ${product.name} hiện đã hết hàng`,
+            product_id: product._id,
+            product_name: product.name,
+          });
+          continue;
+        }
+
         // Find base unit or first active unit for the product
         const productUnit = await ProductUnit.findOne({
-          product_id: ingredient.product_id._id,
+          product_id: product._id,
           is_active: true,
           $or: [{ is_base_unit: true }, { is_base_unit: { $exists: true } }],
         }).sort({ is_base_unit: -1, price: 1 });
 
         if (!productUnit) {
           errors.push({
-            message: `Không tìm thấy đơn vị bán cho sản phẩm ${ingredient.product_id.name}`,
-            product_id: ingredient.product_id._id,
-            product_name: ingredient.product_id.name,
+            message: `Không tìm thấy đơn vị bán cho sản phẩm ${product.name}`,
+            product_id: product._id,
+            product_name: product.name,
           });
           continue;
         }
 
         // Add to cart
-        const quantity = ingredient.quantity_needed || 1;
         const cartItem = await this.addToCart(
           userId,
           productUnit._id,
@@ -233,7 +306,7 @@ class CartService {
         );
         
         addedItems.push({
-          product_name: ingredient.product_id.name,
+          product_name: product.name,
           quantity,
           cartItem,
         });
@@ -245,9 +318,21 @@ class CartService {
       }
     }
 
+    if (addedItems.length === 0) {
+      return {
+        success: false,
+        message: "Không thể thêm nguyên liệu vào giỏ hàng",
+        addedItems: [],
+        errors: errors.length > 0 ? errors : [{ message: "Không có nguyên liệu hợp lệ để thêm" }],
+      };
+    }
+
     return {
       success: true,
-      message: `Đã thêm ${addedItems.length} nguyên liệu vào giỏ hàng`,
+      message:
+        errors.length > 0
+          ? `Đã thêm ${addedItems.length} nguyên liệu, ${errors.length} nguyên liệu không thể thêm`
+          : `Đã thêm ${addedItems.length} nguyên liệu vào giỏ hàng`,
       addedItems,
       errors: errors.length > 0 ? errors : undefined,
     };
