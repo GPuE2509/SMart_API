@@ -15,6 +15,7 @@ const attendanceRouter = require("./routes/admin/attendanceRouter");
 
 // Repository staff routes
 const productBatchRouter = require("./routes/repository_staff/productBatchRouter");
+const sellerPosRouter = require("./routes/seller_staff/posRouter");
 const couponRouter = require("./routes/admin/couponRouter");
 
 // Admin reports and recipe routes
@@ -93,6 +94,9 @@ app.use("/api/v1/attendance", attendanceRouter);
 // Repository staff routes (require repository_staff role)
 app.use("/api/v1/batches", productBatchRouter);
 app.use("/api/v1/coupons", couponRouter);
+
+// Seller staff routes (require seller_staff role)
+app.use("/api/v1/seller/pos", sellerPosRouter);
 
 // Admin reports routes
 app.use("/api/v1/admin/reports", salesReportRouter);
