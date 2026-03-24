@@ -143,6 +143,39 @@ const posController = {
     }
   },
 
+  async updateItem(req, res) {
+    try {
+      const result = await posService.updateItemQuantity(
+        req.params.transactionId,
+        req.params.itemId,
+        req.user._id,
+        req.body.quantity,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Cập nhật số lượng sản phẩm thành công",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS update item error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("Số lượng") ||
+        error.message.includes("đã đóng") ||
+        error.message.includes("không đủ")
+          ? 400
+          : error.message.includes("không tìm thấy")
+            ? 404
+            : 409;
+
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể cập nhật số lượng sản phẩm",
+      });
+    }
+  },
+
   async createPayOSPayment(req, res) {
     try {
       const paymentLink = await posService.createPayOSPayment(

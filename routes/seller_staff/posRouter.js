@@ -48,6 +48,13 @@ router.delete(
   posController.removeItem,
 );
 
+router.patch(
+  "/transactions/:transactionId/items/:itemId",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.updateItem,
+);
+
 router.post(
   "/transactions/:transactionId/payos/create-payment",
   authenticateUser,

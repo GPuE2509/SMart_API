@@ -18,6 +18,15 @@ const productBatchRouter = require("./routes/repository_staff/productBatchRouter
 const sellerPosRouter = require("./routes/seller_staff/posRouter");
 const couponRouter = require("./routes/admin/couponRouter");
 
+// Seller staff routes
+const sellerStaffOrderRouter = require("./routes/seller_staff/orderRouter");
+
+// Admin payroll routes
+const payrollAdminRouter = require("./routes/admin/payrollRouter");
+
+// Staff routes (for both seller_staff and repository_staff)
+const staffPayrollRouter = require("./routes/staff/payrollRouter");
+
 // Admin reports and recipe routes
 const salesReportRouter = require("./routes/admin/salesReportRouter");
 const recipeRouter = require("./routes/admin/recipeRouter");
@@ -52,7 +61,7 @@ app.use(
       "http://192.168.3.207:8081",
       "http://10.10.10.53:8081",
       "http://10.255.100.24:8081",
-      "https://essgenius.vercel.app"
+      "https://essgenius.vercel.app",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -102,7 +111,14 @@ app.use("/api/v1/seller/pos", sellerPosRouter);
 // Admin reports routes
 app.use("/api/v1/admin/reports", salesReportRouter);
 app.use("/api/v1/admin/orders", orderRouter);
+app.use("/api/v1/admin/payroll", payrollAdminRouter);
 app.use("/api/v1/recipes", recipeRouter);
+
+// Seller staff routes (require seller_staff role)
+app.use("/api/v1/seller-staff/orders", sellerStaffOrderRouter);
+
+// Staff routes (for both seller_staff and repository_staff)
+app.use("/api/v1/staff/payroll", staffPayrollRouter);
 
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {
