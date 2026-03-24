@@ -183,6 +183,7 @@ class PosService {
         }).lean();
 
         let availableStock = 0;
+        let maxDiscountPercentage = 0;
 
         for (const batch of batches) {
           for (const item of batch.items) {
@@ -193,9 +194,32 @@ class PosService {
               item.current_quantity > 0
             ) {
               availableStock += item.current_quantity;
+
+              let discountPercentage = 0;
+              if (
+                item.rescue_pricing_enabled &&
+                item.rescue_pricing_active &&
+                item.rescue_discount_percentage > 0
+              ) {
+                discountPercentage = item.rescue_discount_percentage;
+              } else if (
+                !item.rescue_pricing_enabled &&
+                item.manual_discount_percentage > 0
+              ) {
+                discountPercentage = item.manual_discount_percentage;
+              }
+
+              if (discountPercentage > maxDiscountPercentage) {
+                maxDiscountPercentage = discountPercentage;
+              }
             }
           }
         }
+
+        const originalPrice = Math.round(unit.price || 0);
+        const discountedPrice = Math.round(
+          originalPrice - (originalPrice * maxDiscountPercentage) / 100,
+        );
 
         return {
           product_unit_id: unit._id,
@@ -208,7 +232,10 @@ class PosService {
           unit_id: unit.unit_id._id,
           unit_name: unit.unit_id.name,
           barcode: unit.barcode || "",
-          price: unit.price,
+          price: discountedPrice,
+          price_original: originalPrice,
+          price_after_discount: discountedPrice,
+          discount_percentage: maxDiscountPercentage,
           available_stock: availableStock,
         };
       }),
@@ -328,7 +355,9 @@ class PosService {
 
   _normalizePhone(phone) {
     if (!phone) return "";
-    return String(phone).replace(/[^\d+]/g, "").trim();
+    return String(phone)
+      .replace(/[^\d+]/g, "")
+      .trim();
   }
 
   _buildCustomerPayload(user) {
@@ -536,15 +565,22 @@ class PosService {
     const redeemableCoupons = await Promise.all(
       redeemableCouponDocs.map(async (coupon) => {
         let quantityRemaining = null;
-        if (coupon.quantity_limit !== undefined && coupon.quantity_limit !== null) {
+        if (
+          coupon.quantity_limit !== undefined &&
+          coupon.quantity_limit !== null
+        ) {
           const issuedCount = await UserCoupon.countDocuments({
             coupon_id: coupon._id,
           });
-          quantityRemaining = Math.max(0, Number(coupon.quantity_limit) - issuedCount);
+          quantityRemaining = Math.max(
+            0,
+            Number(coupon.quantity_limit) - issuedCount,
+          );
         }
 
         const canRedeemByPoints =
-          Number(user.loyalty_points || 0) >= Number(coupon.points_required || 0);
+          Number(user.loyalty_points || 0) >=
+          Number(coupon.points_required || 0);
         const meetsMinOrder =
           Number(orderAmount || 0) >= Number(coupon.min_order_value || 0);
         const hasQuantity = quantityRemaining === null || quantityRemaining > 0;
@@ -552,7 +588,9 @@ class PosService {
         return {
           coupon,
           can_redeem: Boolean(canRedeemByPoints && hasQuantity),
-          can_apply_after_redeem: Boolean(canRedeemByPoints && hasQuantity && meetsMinOrder),
+          can_apply_after_redeem: Boolean(
+            canRedeemByPoints && hasQuantity && meetsMinOrder,
+          ),
           quantity_remaining: quantityRemaining,
           preview_discount: meetsMinOrder
             ? this._calculateCouponDiscount(coupon, Number(orderAmount) || 0)
@@ -579,10 +617,16 @@ class PosService {
     if (lookup.user_id && mongoose.Types.ObjectId.isValid(lookup.user_id)) {
       query._id = lookup.user_id;
     } else if (lookup.email) {
-      query.email = new RegExp(`^${lookup.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+      query.email = new RegExp(
+        `^${lookup.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+        "i",
+      );
     } else if (lookup.phone) {
       query.phone = new RegExp(
-        this._normalizePhone(lookup.phone).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        this._normalizePhone(lookup.phone).replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&",
+        ),
         "i",
       );
     } else {
@@ -736,7 +780,8 @@ class PosService {
       }
     }
 
-    customer.loyalty_points = Number(customer.loyalty_points || 0) - requiredPoints;
+    customer.loyalty_points =
+      Number(customer.loyalty_points || 0) - requiredPoints;
     await customer.save();
 
     const userCoupon = await UserCoupon.create({
@@ -744,7 +789,10 @@ class PosService {
       coupon_id: coupon._id,
     });
 
-    const refreshed = await this.getTransactionCustomerCoupons(order._id, staffId);
+    const refreshed = await this.getTransactionCustomerCoupons(
+      order._id,
+      staffId,
+    );
 
     return {
       user_coupon_id: userCoupon._id,
@@ -767,7 +815,9 @@ class PosService {
       throw new Error("Vui lòng gán khách hàng trước khi áp mã giảm giá");
     }
 
-    const rawCode = String(couponCode || "").trim().toUpperCase();
+    const rawCode = String(couponCode || "")
+      .trim()
+      .toUpperCase();
     if (!rawCode) {
       throw new Error("Mã giảm giá không hợp lệ");
     }
@@ -787,7 +837,10 @@ class PosService {
       throw new Error("Mã giảm giá không hợp lệ hoặc đã hết hạn");
     }
 
-    if (Number(latestOrder.total_amount || 0) < Number(coupon.min_order_value || 0)) {
+    if (
+      Number(latestOrder.total_amount || 0) <
+      Number(coupon.min_order_value || 0)
+    ) {
       throw new Error(
         `Đơn hàng tối thiểu ${Number(coupon.min_order_value || 0).toLocaleString("vi-VN")}đ để sử dụng mã này`,
       );
@@ -886,6 +939,21 @@ class PosService {
       throw new Error("Transaction đã đóng, không thể thêm sản phẩm");
     }
 
+    const existingDetail = await OrderDetail.findOne({
+      order_id: order._id,
+      product_unit_id,
+    });
+
+    if (existingDetail) {
+      const nextQuantity = Number(existingDetail.quantity || 0) + qty;
+      return this.updateItemQuantity(
+        transactionId,
+        existingDetail._id,
+        staffId,
+        nextQuantity,
+      );
+    }
+
     const productUnit = await ProductUnit.findById(product_unit_id)
       .populate("product_id")
       .populate("unit_id");
@@ -962,7 +1030,9 @@ class PosService {
   }
 
   async addProductToTransactionByBarcode(transactionId, staffId, payload = {}) {
-    const barcode = this._extractBarcodeFromScan(payload.barcode || payload.scan_data || payload);
+    const barcode = this._extractBarcodeFromScan(
+      payload.barcode || payload.scan_data || payload,
+    );
     const quantity = Number(payload.quantity || 1);
 
     if (!quantity || quantity < 1) {
@@ -1032,51 +1102,97 @@ class PosService {
       throw new Error("Sản phẩm không tồn tại hoặc đã ngừng kinh doanh");
     }
 
-    // Nếu tăng số lượng, cần kiểm tra tồn kho
-    if (quantityDiff > 0) {
-      const batch = await ProductBatch.findOne({
-        "items.product_id": productUnit.product_id._id,
-        "items.unit_id": productUnit.unit_id._id,
-        "items.current_quantity": { $gte: quantityDiff },
-        "items.status": "onsale",
-        is_deleted: false,
-      }).sort({ created_at: 1 });
+    const candidateBatches = await ProductBatch.find({
+      "items.product_id": productUnit.product_id._id,
+      "items.unit_id": productUnit.unit_id._id,
+      "items.status": "onsale",
+      is_deleted: false,
+    }).sort({ created_at: 1 });
 
-      if (!batch) {
-        throw new Error(
-          `Không đủ tồn kho để tăng số lượng lên ${qty}. Tồn kho không đủ.`,
-        );
+    let selectedBatchId = null;
+    let selectedBatchItemId = null;
+
+    for (const batch of candidateBatches) {
+      const batchItem = batch.items.find(
+        (item) =>
+          item.product_id.toString() ===
+            productUnit.product_id._id.toString() &&
+          item.unit_id.toString() === productUnit.unit_id._id.toString() &&
+          item.status === "onsale",
+      );
+
+      if (!batchItem) continue;
+
+      const isCurrentBatchItem =
+        detail.product_batch_id &&
+        detail.batch_item_id &&
+        String(batch._id) === String(detail.product_batch_id) &&
+        String(batchItem._id) === String(detail.batch_item_id);
+
+      const virtualAvailable =
+        Number(batchItem.current_quantity || 0) +
+        (isCurrentBatchItem ? Number(oldQuantity || 0) : 0);
+
+      if (virtualAvailable >= qty) {
+        selectedBatchId = batch._id;
+        selectedBatchItemId = batchItem._id;
+        break;
       }
     }
 
-    // Cập nhật batch hiện tại (hoàn trả hoặc trừ thêm)
+    if (!selectedBatchId || !selectedBatchItemId) {
+      throw new Error(
+        `Không đủ tồn kho để cập nhật số lượng lên ${qty}. Tồn kho không đủ.`,
+      );
+    }
+
+    // Hoàn lại toàn bộ số lượng cũ về batch cũ trước khi phân bổ lại.
     if (detail.product_batch_id && detail.batch_item_id) {
-      const batch = await ProductBatch.findById(detail.product_batch_id);
-      if (batch) {
-        const batchItem = batch.items.id(detail.batch_item_id);
-        if (batchItem) {
-          // quantityDiff > 0: trừ thêm từ batch
-          // quantityDiff < 0: hoàn trả vào batch
-          batchItem.current_quantity =
-            (batchItem.current_quantity || 0) - quantityDiff;
-
-          if (batchItem.current_quantity === 0) {
-            batchItem.status = "sold";
-            batchItem.rescue_pricing_active = false;
-            batchItem.rescue_discount_percentage = 0;
-          } else if (batchItem.status === "sold") {
-            batchItem.status = "onsale";
+      const currentBatch = await ProductBatch.findById(detail.product_batch_id);
+      if (currentBatch) {
+        const currentBatchItem = currentBatch.items.id(detail.batch_item_id);
+        if (currentBatchItem) {
+          currentBatchItem.current_quantity =
+            Number(currentBatchItem.current_quantity || 0) +
+            Number(oldQuantity || 0);
+          if (currentBatchItem.status === "sold") {
+            currentBatchItem.status = "onsale";
           }
-
-          await batch.save();
+          await currentBatch.save();
         }
       }
     }
 
+    const selectedBatch = await ProductBatch.findById(selectedBatchId);
+    if (!selectedBatch) {
+      throw new Error("Không tìm thấy lô hàng phù hợp để cập nhật sản phẩm");
+    }
+
+    const selectedBatchItem = selectedBatch.items.id(selectedBatchItemId);
+    if (!selectedBatchItem) {
+      throw new Error("Không tìm thấy mặt hàng trong lô để cập nhật sản phẩm");
+    }
+
+    selectedBatchItem.current_quantity = Math.max(
+      0,
+      Number(selectedBatchItem.current_quantity || 0) - qty,
+    );
+
+    if (selectedBatchItem.current_quantity === 0) {
+      selectedBatchItem.status = "sold";
+      selectedBatchItem.rescue_pricing_active = false;
+      selectedBatchItem.rescue_discount_percentage = 0;
+    } else if (selectedBatchItem.status === "sold") {
+      selectedBatchItem.status = "onsale";
+    }
+
+    await selectedBatch.save();
+
     // Cập nhật tổng tồn kho sản phẩm
     const product = await Product.findById(productUnit.product_id._id);
     if (product) {
-      const quantityInBaseDiff = quantityDiff * (productUnit.exchange_value || 1);
+      const quantityInBaseDiff =
+        quantityDiff * (productUnit.exchange_value || 1);
       product.total_stock = Math.max(
         0,
         (product.total_stock || 0) - quantityInBaseDiff,
@@ -1085,6 +1201,8 @@ class PosService {
     }
 
     // Cập nhật OrderDetail
+    detail.product_batch_id = selectedBatch._id;
+    detail.batch_item_id = selectedBatchItem._id;
     detail.quantity = qty;
     detail.total_price = Math.round(detail.unit_price * qty);
     await detail.save();
@@ -1231,7 +1349,10 @@ class PosService {
         order.total_amount >= Number(coupon.min_order_value || 0);
 
       if (isCouponUsable) {
-        discountAmount = this._calculateCouponDiscount(coupon, order.total_amount);
+        discountAmount = this._calculateCouponDiscount(
+          coupon,
+          order.total_amount,
+        );
       } else {
         order.coupon_id = null;
       }
@@ -1411,7 +1532,9 @@ class PosService {
       throw new Error("Tiền khách đưa không đủ để thanh toán");
     }
 
-    const changeAmount = Math.round(roundedCashReceived - latestOrder.final_amount);
+    const changeAmount = Math.round(
+      roundedCashReceived - latestOrder.final_amount,
+    );
 
     latestOrder.payment_method = "cod";
     latestOrder.payment_status = "paid";
@@ -1489,7 +1612,9 @@ class PosService {
       throw new Error("Transaction chưa có sản phẩm để xuất biên lai");
     }
 
-    const staff = await User.findById(order.staff_id).select("username full_name");
+    const staff = await User.findById(order.staff_id).select(
+      "username full_name",
+    );
 
     const receiptData = {
       order_id: order._id,
