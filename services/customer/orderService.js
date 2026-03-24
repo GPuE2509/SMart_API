@@ -34,6 +34,241 @@ class OrderService {
     return `ORD${timestamp}${random}`;
   }
 
+  _isBatchItemSellable(batchItem, now = new Date()) {
+    if (!batchItem) return false;
+    if (batchItem.status !== "onsale") return false;
+    if (Number(batchItem.current_quantity || 0) <= 0) return false;
+
+    if (!batchItem.expiry_date) return true;
+    const expiry = new Date(batchItem.expiry_date);
+    if (Number.isNaN(expiry.getTime())) return true;
+
+    return expiry >= now;
+  }
+
+  _getBatchItemExpiryTime(batchItem) {
+    if (!batchItem?.expiry_date) return Number.MAX_SAFE_INTEGER;
+    const time = new Date(batchItem.expiry_date).getTime();
+    return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+  }
+
+  _getBatchItemDiscountPercentage(batchItem) {
+    if (
+      batchItem?.rescue_pricing_enabled &&
+      batchItem?.rescue_pricing_active &&
+      Number(batchItem?.rescue_discount_percentage || 0) > 0
+    ) {
+      return Number(batchItem.rescue_discount_percentage);
+    }
+
+    if (
+      !batchItem?.rescue_pricing_enabled &&
+      Number(batchItem?.manual_discount_percentage || 0) > 0
+    ) {
+      return Number(batchItem.manual_discount_percentage);
+    }
+
+    return 0;
+  }
+
+  _normalizeDetailAllocations(detail) {
+    if (
+      Array.isArray(detail?.batch_allocations) &&
+      detail.batch_allocations.length
+    ) {
+      return detail.batch_allocations
+        .filter(
+          (item) =>
+            item?.product_batch_id &&
+            item?.batch_item_id &&
+            Number(item?.quantity || 0) > 0,
+        )
+        .map((item) => ({
+          product_batch_id: String(item.product_batch_id),
+          batch_item_id: String(item.batch_item_id),
+          quantity: Number(item.quantity),
+        }));
+    }
+
+    if (
+      detail?.product_batch_id &&
+      detail?.batch_item_id &&
+      Number(detail?.quantity || 0) > 0
+    ) {
+      return [
+        {
+          product_batch_id: String(detail.product_batch_id),
+          batch_item_id: String(detail.batch_item_id),
+          quantity: Number(detail.quantity),
+        },
+      ];
+    }
+
+    return [];
+  }
+
+  async _allocateForProductUnit(productUnit, quantity) {
+    const qty = Number(quantity || 0);
+    if (!qty || qty < 1) {
+      throw new Error("Số lượng không hợp lệ");
+    }
+
+    const batches = await ProductBatch.find({
+      "items.product_id": productUnit.product_id._id,
+      "items.unit_id": productUnit.unit_id._id,
+      "items.current_quantity": { $gt: 0 },
+      "items.status": "onsale",
+      is_deleted: false,
+    }).lean();
+
+    const candidates = [];
+    for (const batch of batches) {
+      for (const item of batch.items || []) {
+        if (
+          item.product_id.toString() !==
+            productUnit.product_id._id.toString() ||
+          item.unit_id.toString() !== productUnit.unit_id._id.toString()
+        ) {
+          continue;
+        }
+        if (!this._isBatchItemSellable(item)) continue;
+
+        const originalUnitPrice = Math.round(Number(productUnit.price || 0));
+        const discountPercentage = this._getBatchItemDiscountPercentage(item);
+        const unitPrice = Math.round(
+          originalUnitPrice - (originalUnitPrice * discountPercentage) / 100,
+        );
+
+        candidates.push({
+          product_batch_id: String(batch._id),
+          batch_item_id: String(item._id),
+          available: Number(item.current_quantity || 0),
+          expiryTime: this._getBatchItemExpiryTime(item),
+          createdAt: new Date(batch.created_at).getTime(),
+          original_unit_price: originalUnitPrice,
+          unit_price: unitPrice,
+          discount_percentage: discountPercentage,
+          discount_amount: Math.max(0, originalUnitPrice - unitPrice),
+          is_rescue_pricing:
+            item.rescue_pricing_enabled &&
+            item.rescue_pricing_active &&
+            discountPercentage > 0,
+        });
+      }
+    }
+
+    candidates.sort((a, b) => {
+      if (a.expiryTime !== b.expiryTime) return a.expiryTime - b.expiryTime;
+      return a.createdAt - b.createdAt;
+    });
+
+    const allocations = [];
+    let remaining = qty;
+
+    for (const candidate of candidates) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, candidate.available);
+      if (take <= 0) continue;
+
+      allocations.push({
+        product_batch_id: candidate.product_batch_id,
+        batch_item_id: candidate.batch_item_id,
+        quantity: take,
+        original_unit_price: candidate.original_unit_price,
+        unit_price: candidate.unit_price,
+        discount_percentage: candidate.discount_percentage,
+        discount_amount: candidate.discount_amount * take,
+        is_rescue_pricing: candidate.is_rescue_pricing,
+      });
+
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      throw new Error(
+        `Xin lỗi, sản phẩm ${productUnit.product_id.name} hiện tại đã hết hàng trong kho.`,
+      );
+    }
+
+    const totalPrice = allocations.reduce(
+      (sum, item) =>
+        sum + Number(item.unit_price || 0) * Number(item.quantity || 0),
+      0,
+    );
+    const totalDiscountAmount = allocations.reduce(
+      (sum, item) => sum + Number(item.discount_amount || 0),
+      0,
+    );
+    const discountedQuantity = allocations.reduce(
+      (sum, item) =>
+        sum +
+        (Number(item.discount_percentage || 0) > 0
+          ? Number(item.quantity || 0)
+          : 0),
+      0,
+    );
+    const maxDiscountPercentage = allocations.reduce(
+      (max, item) => Math.max(max, Number(item.discount_percentage || 0)),
+      0,
+    );
+    const effectiveUnitPrice = Math.round(totalPrice / qty);
+
+    return {
+      allocations,
+      totalPrice: Math.round(totalPrice),
+      totalDiscountAmount: Math.round(totalDiscountAmount),
+      discountedQuantity,
+      maxDiscountPercentage,
+      effectiveUnitPrice,
+      firstAllocation: allocations[0] || null,
+    };
+  }
+
+  async _findNearestSellableBatchItem(productId, unitId, minQuantity = 1) {
+    const batches = await ProductBatch.find({
+      "items.product_id": productId,
+      "items.unit_id": unitId,
+      "items.current_quantity": { $gte: minQuantity },
+      "items.status": "onsale",
+      is_deleted: false,
+    }).lean();
+
+    const candidates = [];
+
+    for (const batch of batches) {
+      for (const item of batch.items || []) {
+        if (item.product_id.toString() !== String(productId)) continue;
+        if (item.unit_id.toString() !== String(unitId)) continue;
+        if (!this._isBatchItemSellable(item)) continue;
+        if (Number(item.current_quantity || 0) < Number(minQuantity || 1)) {
+          continue;
+        }
+
+        candidates.push({
+          batch,
+          batchItem: item,
+          expiryTime: this._getBatchItemExpiryTime(item),
+        });
+      }
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((a, b) => {
+      if (a.expiryTime !== b.expiryTime) {
+        return a.expiryTime - b.expiryTime;
+      }
+      return (
+        new Date(a.batch.created_at).getTime() -
+        new Date(b.batch.created_at).getTime()
+      );
+    });
+
+    return candidates[0];
+  }
+
   // Create new order
   async createOrder(userId, orderData) {
     try {
@@ -65,73 +300,12 @@ class OrderService {
           );
         }
 
-        // Find available batch with matching product and unit
-        // ProductBatch has nested items array structure
-        const batch = await ProductBatch.findOne({
-          "items.product_id": productUnit.product_id._id,
-          "items.unit_id": productUnit.unit_id._id,
-          "items.current_quantity": { $gte: item.quantity },
-          "items.status": "onsale",
-          is_deleted: false,
-        }).sort({ created_at: 1 });
-
-        if (!batch) {
-          throw new Error(
-            `Xin lỗi, sản phẩm ${productUnit.product_id.name} hiện tại đã hết hàng trong kho.`,
-          );
-        }
-
-        // Find the specific item within batch
-        const batchItem = batch.items.find(
-          (bItem) =>
-            bItem.product_id.toString() ===
-              productUnit.product_id._id.toString() &&
-            bItem.unit_id.toString() === productUnit.unit_id._id.toString() &&
-            bItem.current_quantity >= item.quantity &&
-            bItem.status === "onsale",
+        const pricing = await this._allocateForProductUnit(
+          productUnit,
+          item.quantity,
         );
 
-        if (!batchItem) {
-          throw new Error(
-            `Xin lỗi! Sản phẩm "${productUnit.product_id.name}" không còn đủ ${item.quantity} phần trong lô hàng hiện tại. Bạn vui lòng giảm số lượng.`,
-          );
-        }
-
-        // Apply active discount policy: rescue pricing (auto) or manual discount.
-        let finalUnitPrice = productUnit.price;
-        let rescuePricing = {
-          isRescuePricing: false,
-          originalPrice: productUnit.price,
-          discountPercentage: 0,
-          discountAmount: 0,
-        };
-
-        if (
-          batchItem.rescue_pricing_enabled &&
-          batchItem.rescue_pricing_active &&
-          batchItem.rescue_discount_percentage > 0
-        ) {
-          rescuePricing.isRescuePricing = true;
-          rescuePricing.discountPercentage =
-            batchItem.rescue_discount_percentage;
-
-          // Calculate discounted price (rounded)
-          finalUnitPrice = Math.round(
-            (productUnit.price * (100 - batchItem.rescue_discount_percentage)) /
-              100,
-          );
-          rescuePricing.discountAmount = productUnit.price - finalUnitPrice;
-        } else if (
-          !batchItem.rescue_pricing_enabled &&
-          batchItem.manual_discount_percentage > 0
-        ) {
-          const manualDiscount = batchItem.manual_discount_percentage;
-          finalUnitPrice = Math.round(
-            (productUnit.price * (100 - manualDiscount)) / 100,
-          );
-        }
-
-        const itemTotal = Math.round(finalUnitPrice * item.quantity);
+        const itemTotal = pricing.totalPrice;
         totalAmount += itemTotal;
 
         // Calculate tax based on product's tax_percentage (applied on discounted price)
@@ -141,19 +315,20 @@ class OrderService {
 
         orderItems.push({
           product_unit_id: item.product_unit_id,
-          product_batch_id: batch._id,
-          batch_item_id: batchItem._id, // Store the specific item ID
+          product_batch_id: pricing.firstAllocation?.product_batch_id,
+          batch_item_id: pricing.firstAllocation?.batch_item_id,
           quantity: item.quantity,
-          unit_price: finalUnitPrice,
+          unit_price: pricing.effectiveUnitPrice,
           total_price: itemTotal,
+          batch_allocations: pricing.allocations,
           // Store for updating product total_stock
           product_id: productUnit.product_id._id,
           exchange_value: productUnit.exchange_value,
           // Rescue pricing info
-          is_rescue_pricing: rescuePricing.isRescuePricing,
-          original_unit_price: rescuePricing.originalPrice,
-          rescue_discount_percentage: rescuePricing.discountPercentage,
-          rescue_discount_amount: rescuePricing.discountAmount * item.quantity,
+          is_rescue_pricing: pricing.discountedQuantity > 0,
+          original_unit_price: Math.round(productUnit.price || 0),
+          rescue_discount_percentage: pricing.maxDiscountPercentage,
+          rescue_discount_amount: pricing.totalDiscountAmount,
         });
       }
 
@@ -266,34 +441,45 @@ class OrderService {
           original_unit_price: item.original_unit_price || item.unit_price,
           rescue_discount_percentage: item.rescue_discount_percentage || 0,
           rescue_discount_amount: item.rescue_discount_amount || 0,
+          batch_allocations: item.batch_allocations || [],
         });
         await orderDetail.save();
 
-        // Update batch item quantity and mark as sold when stock is fully consumed.
-        const batchDoc = await ProductBatch.findById(item.product_batch_id);
-        if (!batchDoc) {
-          throw new Error(`Không tìm thấy lô hàng ${item.product_batch_id}`);
-        }
-
-        const batchItem = batchDoc.items.id(item.batch_item_id);
-        if (!batchItem) {
-          throw new Error(
-            `Không tìm thấy sản phẩm trong lô ${item.product_batch_id}`,
+        for (const allocation of item.batch_allocations || []) {
+          const batchDoc = await ProductBatch.findById(
+            allocation.product_batch_id,
           );
+          if (!batchDoc) {
+            throw new Error(
+              `Không tìm thấy lô hàng ${allocation.product_batch_id}`,
+            );
+          }
+
+          const batchItem = batchDoc.items.id(allocation.batch_item_id);
+          if (!batchItem || !this._isBatchItemSellable(batchItem)) {
+            throw new Error(
+              `Không tìm thấy sản phẩm trong lô ${allocation.product_batch_id}`,
+            );
+          }
+
+          const deductionQty = Number(allocation.quantity || 0);
+          if (Number(batchItem.current_quantity || 0) < deductionQty) {
+            throw new Error(
+              "Tồn kho thay đổi, không đủ số lượng để tạo đơn hàng",
+            );
+          }
+
+          batchItem.current_quantity = Math.max(
+            0,
+            Number(batchItem.current_quantity || 0) - deductionQty,
+          );
+
+          if (batchItem.current_quantity === 0) {
+            batchItem.status = "sold";
+          }
+
+          await batchDoc.save();
         }
-
-        batchItem.current_quantity = Math.max(
-          0,
-          (batchItem.current_quantity || 0) - item.quantity,
-        );
-
-        if (batchItem.current_quantity === 0) {
-          batchItem.status = "sold";
-          batchItem.rescue_pricing_active = false;
-          batchItem.rescue_discount_percentage = 0;
-        }
-
-        await batchDoc.save();
 
         // Update product total_stock (convert to base unit)
         const product = await Product.findById(item.product_id);
@@ -441,73 +627,57 @@ class OrderService {
             reason: "Sản phẩm không còn kinh doanh",
           };
         } else {
-          const batch = await ProductBatch.findOne({
-            "items.product_id": product._id,
-            "items.unit_id": unit._id,
-            "items.current_quantity": { $gt: 0 },
-            "items.status": "onsale",
-            is_deleted: false,
-          }).sort({ created_at: 1 });
+          const allocation = await this._findNearestSellableBatchItem(
+            product._id,
+            unit._id,
+            1,
+          );
 
-          if (!batch) {
+          if (!allocation) {
             availability = {
               isAvailable: false,
               reason: "Không đủ tồn kho với số lượng đã mua trước đó",
             };
           } else {
-            const batchItem = batch.items.find(
-              (item) =>
-                item.product_id.toString() === product._id.toString() &&
-                item.unit_id.toString() === unit._id.toString() &&
-                item.current_quantity > 0 &&
-                item.status === "onsale",
-            );
+            const batchItem = allocation.batchItem;
+            availableQuantity = batchItem.current_quantity || 0;
 
-            if (!batchItem) {
-              availability = {
-                isAvailable: false,
-                reason: "Không đủ tồn kho với số lượng đã mua trước đó",
+            let discountPercentage = 0;
+            if (
+              batchItem.rescue_pricing_enabled &&
+              batchItem.rescue_pricing_active &&
+              batchItem.rescue_discount_percentage > 0
+            ) {
+              discountPercentage = batchItem.rescue_discount_percentage;
+            } else if (
+              !batchItem.rescue_pricing_enabled &&
+              batchItem.manual_discount_percentage > 0
+            ) {
+              discountPercentage = batchItem.manual_discount_percentage;
+            }
+
+            if (discountPercentage > 0) {
+              const originalPrice = productUnit.price;
+              const discountedPrice = Math.round(
+                (originalPrice * (100 - discountPercentage)) / 100,
+              );
+
+              rescuePricing = {
+                isAvailable: true,
+                originalPrice,
+                discountPercentage,
+                discountedPrice,
+                savings:
+                  (originalPrice - discountedPrice) *
+                  Math.min(previousQuantity, availableQuantity),
               };
-            } else {
-              availableQuantity = batchItem.current_quantity || 0;
+            }
 
-              let discountPercentage = 0;
-              if (
-                batchItem.rescue_pricing_enabled &&
-                batchItem.rescue_pricing_active &&
-                batchItem.rescue_discount_percentage > 0
-              ) {
-                discountPercentage = batchItem.rescue_discount_percentage;
-              } else if (
-                !batchItem.rescue_pricing_enabled &&
-                batchItem.manual_discount_percentage > 0
-              ) {
-                discountPercentage = batchItem.manual_discount_percentage;
-              }
-
-              if (discountPercentage > 0) {
-                const originalPrice = productUnit.price;
-                const discountedPrice = Math.round(
-                  (originalPrice * (100 - discountPercentage)) / 100,
-                );
-
-                rescuePricing = {
-                  isAvailable: true,
-                  originalPrice,
-                  discountPercentage,
-                  discountedPrice,
-                  savings:
-                    (originalPrice - discountedPrice) *
-                    Math.min(previousQuantity, availableQuantity),
-                };
-              }
-
-              if (availableQuantity < previousQuantity) {
-                availability = {
-                  isAvailable: true,
-                  reason: `Hiện chỉ còn ${availableQuantity} sản phẩm khả dụng`,
-                };
-              }
+            if (availableQuantity < previousQuantity) {
+              availability = {
+                isAvailable: true,
+                reason: `Hiện chỉ còn ${availableQuantity} sản phẩm khả dụng`,
+              };
             }
           }
         }
@@ -586,15 +756,13 @@ class OrderService {
       }
 
       // Validate current inventory before adding to cart.
-      const batch = await ProductBatch.findOne({
-        "items.product_id": productUnit.product_id?._id,
-        "items.unit_id": productUnit.unit_id?._id,
-        "items.current_quantity": { $gte: quantity },
-        "items.status": "onsale",
-        is_deleted: false,
-      }).sort({ created_at: 1 });
+      const allocation = await this._findNearestSellableBatchItem(
+        productUnit.product_id?._id,
+        productUnit.unit_id?._id,
+        quantity,
+      );
 
-      if (!batch) {
+      if (!allocation) {
         skippedItems.push({
           order_detail_id: detail._id,
           product_unit_id: productUnit._id,
@@ -817,16 +985,38 @@ class OrderService {
         }).populate("product_unit_id");
 
         for (const item of details) {
-          if (!item.product_batch_id || !item.batch_item_id) continue;
+          const allocations = this._normalizeDetailAllocations(item);
 
-          // Cộng ngược đồ đạc về kho (ProductBatch)
-          await ProductBatch.updateOne(
-            {
-              _id: item.product_batch_id,
-              "items._id": item.batch_item_id,
-            },
-            { $inc: { "items.$.current_quantity": item.quantity } }, // Lệnh $inc để cộng số dương
-          );
+          for (const allocation of allocations) {
+            const batch = await ProductBatch.findById(
+              allocation.product_batch_id,
+            );
+            if (!batch) continue;
+
+            const batchItem = batch.items.id(allocation.batch_item_id);
+            if (!batchItem) continue;
+
+            batchItem.current_quantity =
+              Number(batchItem.current_quantity || 0) +
+              Number(allocation.quantity || 0);
+
+            if (Number(batchItem.current_quantity || 0) <= 0) {
+              batchItem.status = "sold";
+            } else if (batchItem.expiry_date) {
+              const expiry = new Date(batchItem.expiry_date);
+              if (!Number.isNaN(expiry.getTime()) && expiry < new Date()) {
+                batchItem.status = "outdate";
+                batchItem.rescue_pricing_active = false;
+                batchItem.rescue_discount_percentage = 0;
+              } else {
+                batchItem.status = "onsale";
+              }
+            } else {
+              batchItem.status = "onsale";
+            }
+
+            await batch.save();
+          }
 
           // Nhớ cộng lại tổng hiển thị kho ảo (Product.total_stock)
           const productUnit = item.product_unit_id;

@@ -56,6 +56,51 @@ const orderDetailSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    batch_allocations: {
+      type: [
+        {
+          product_batch_id: {
+            type: String,
+            ref: "ProductBatch",
+            required: true,
+          },
+          batch_item_id: {
+            type: mongoose.Schema.Types.ObjectId,
+            required: true,
+          },
+          quantity: {
+            type: Number,
+            required: true,
+            min: 1,
+          },
+          original_unit_price: {
+            type: Number,
+            default: 0,
+          },
+          unit_price: {
+            type: Number,
+            required: true,
+            min: 0,
+          },
+          discount_percentage: {
+            type: Number,
+            default: 0,
+            min: 0,
+            max: 100,
+          },
+          discount_amount: {
+            type: Number,
+            default: 0,
+            min: 0,
+          },
+          is_rescue_pricing: {
+            type: Boolean,
+            default: false,
+          },
+        },
+      ],
+      default: [],
+    },
   },
   {
     timestamps: true,
