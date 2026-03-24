@@ -30,6 +30,7 @@ const staffPayrollRouter = require("./routes/staff/payrollRouter");
 // Admin reports and recipe routes
 const salesReportRouter = require("./routes/admin/salesReportRouter");
 const recipeRouter = require("./routes/admin/recipeRouter");
+const orderRouter = require("./routes/admin/orderRouter");
 
 // Customer routes (public/no admin required)
 const customerProductRouter = require("./routes/customer/productRouter");
@@ -109,6 +110,7 @@ app.use("/api/v1/seller/pos", sellerPosRouter);
 
 // Admin reports routes
 app.use("/api/v1/admin/reports", salesReportRouter);
+app.use("/api/v1/admin/orders", orderRouter);
 app.use("/api/v1/admin/payroll", payrollAdminRouter);
 app.use("/api/v1/recipes", recipeRouter);
 
