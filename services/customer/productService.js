@@ -1,4 +1,22 @@
-const { Product, Category, ProductUnit, Unit, ProductBatch } = require("../../models");
+const {
+  Product,
+  Category,
+  ProductUnit,
+  Unit,
+  ProductBatch,
+} = require("../../models");
+
+const isBatchItemSellable = (batchItem, now = new Date()) => {
+  if (!batchItem) return false;
+  if (batchItem.status !== "onsale") return false;
+  if (Number(batchItem.current_quantity || 0) <= 0) return false;
+
+  if (!batchItem.expiry_date) return true;
+  const expiry = new Date(batchItem.expiry_date);
+  if (Number.isNaN(expiry.getTime())) return true;
+
+  return expiry >= now;
+};
 
 const productService = {
   /**
@@ -69,6 +87,7 @@ const productService = {
 
         // Find max effective discount available for this product (rescue or manual)
         product.maxRescueDiscount = 0;
+        product.discounted_stock = 0;
         try {
           const batches = await ProductBatch.find({
             "items.product_id": product._id,
@@ -95,9 +114,18 @@ const productService = {
 
               if (
                 item.product_id.toString() === product._id.toString() &&
+                isBatchItemSellable(item) &&
                 discountPercentage > product.maxRescueDiscount
               ) {
                 product.maxRescueDiscount = discountPercentage;
+              }
+
+              if (
+                item.product_id.toString() === product._id.toString() &&
+                isBatchItemSellable(item) &&
+                discountPercentage > 0
+              ) {
+                product.discounted_stock += Number(item.current_quantity || 0);
               }
             }
           }
@@ -196,13 +224,14 @@ const productService = {
         // Sum up current_quantity and find max effective discount
         let totalStock = 0;
         let maxRescueDiscount = 0;
-        
+        let discountedStock = 0;
+
         for (let batch of batches) {
           for (let item of batch.items) {
             if (
               item.product_id.toString() === product._id.toString() &&
               item.unit_id.toString() === unit.unit_id._id.toString() &&
-              item.status === "onsale"
+              isBatchItemSellable(item)
             ) {
               totalStock += item.current_quantity;
 
@@ -223,12 +252,17 @@ const productService = {
               if (discountPercentage > maxRescueDiscount) {
                 maxRescueDiscount = discountPercentage;
               }
+
+              if (discountPercentage > 0) {
+                discountedStock += Number(item.current_quantity || 0);
+              }
             }
           }
         }
 
         unit.available_stock = totalStock;
         unit.maxRescueDiscount = maxRescueDiscount;
+        unit.discounted_stock = discountedStock;
       }
 
       product.units = units;
@@ -240,7 +274,10 @@ const productService = {
       );
 
       // Get max rescue discount across all units
-      product.maxRescueDiscount = Math.max(...units.map(u => u.maxRescueDiscount || 0), 0);
+      product.maxRescueDiscount = Math.max(
+        ...units.map((u) => u.maxRescueDiscount || 0),
+        0,
+      );
 
       return {
         success: true,

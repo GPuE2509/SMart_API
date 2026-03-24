@@ -167,6 +167,36 @@ const updateBatchStatus = (batch) => {
 };
 
 /**
+ * Apply display-only rules for repository view.
+ * Sold-out items should show rescue pricing as disabled/off and no active discount.
+ */
+const applyRepositoryDisplayRules = (batch) => {
+  if (!batch?.items || !Array.isArray(batch.items)) {
+    return batch;
+  }
+
+  batch.items = batch.items.map((item) => {
+    const quantity = Number(item?.current_quantity || 0);
+    const isSoldOut = item?.status === "sold" || quantity <= 0;
+
+    if (!isSoldOut) {
+      return item;
+    }
+
+    return {
+      ...item,
+      status: "sold",
+      rescue_pricing_enabled: false,
+      rescue_pricing_active: false,
+      rescue_discount_percentage: 0,
+      manual_discount_percentage: 0,
+    };
+  });
+
+  return batch;
+};
+
+/**
  * Get all product batches with filters, search, and pagination
  * @param {Object} filters - { search, product_id, status, expiry_date_from, expiry_date_to, include_deleted, sort_by, sort_order, page, limit }
  * @returns {Object} - { batches, pagination }
@@ -237,6 +267,7 @@ exports.getAllBatches = async (filters) => {
 
   // Update status based on expiry date
   batches = batches.map(updateBatchStatus);
+  batches = batches.map(applyRepositoryDisplayRules);
 
   // Search by batch code, supplier name, or product name
   if (search) {
@@ -349,6 +380,7 @@ exports.getBatchById = async (id) => {
 
   // Update status based on expiry date
   batch = updateBatchStatus(batch);
+  batch = applyRepositoryDisplayRules(batch);
 
   // If batch is deleted (rejected), fetch rejection reason from InventoryLog
   if (batch.is_deleted) {
@@ -1261,11 +1293,11 @@ Số sản phẩm phân tích: ${productsForAnalysis.length}`;
  */
 exports.getPrintLabelData = async (batchId, itemId) => {
   const batch = await ProductBatch.findById(batchId).populate(
-    'items.product_id items.unit_id'
+    "items.product_id items.unit_id",
   );
 
   if (!batch) {
-    const err = new Error('Không tìm thấy lô hàng');
+    const err = new Error("Không tìm thấy lô hàng");
     err.statusCode = 404;
     throw err;
   }
@@ -1273,7 +1305,7 @@ exports.getPrintLabelData = async (batchId, itemId) => {
   const item = batch.items.id(itemId);
 
   if (!item) {
-    const err = new Error('Không tìm thấy sản phẩm trong lô hàng');
+    const err = new Error("Không tìm thấy sản phẩm trong lô hàng");
     err.statusCode = 404;
     throw err;
   }
@@ -1288,7 +1320,7 @@ exports.getPrintLabelData = async (batchId, itemId) => {
   });
 
   if (!productUnit) {
-    const err = new Error('Không tìm thấy thông tin giá bán của sản phẩm');
+    const err = new Error("Không tìm thấy thông tin giá bán của sản phẩm");
     err.statusCode = 404;
     throw err;
   }
@@ -1298,10 +1330,17 @@ exports.getPrintLabelData = async (batchId, itemId) => {
   let discountPercentage = 0;
   let isAutoDiscount = false;
 
-  if (item.rescue_pricing_enabled && item.rescue_pricing_active && item.rescue_discount_percentage > 0) {
+  if (
+    item.rescue_pricing_enabled &&
+    item.rescue_pricing_active &&
+    item.rescue_discount_percentage > 0
+  ) {
     discountPercentage = item.rescue_discount_percentage;
     isAutoDiscount = true;
-  } else if (!item.rescue_pricing_enabled && item.manual_discount_percentage > 0) {
+  } else if (
+    !item.rescue_pricing_enabled &&
+    item.manual_discount_percentage > 0
+  ) {
     discountPercentage = item.manual_discount_percentage;
     isAutoDiscount = false;
   }
@@ -1320,7 +1359,8 @@ exports.getPrintLabelData = async (batchId, itemId) => {
     finalPrice,
     expiryDate: item.expiry_date,
     rescuePricing: discountPercentage > 0,
-    manualDiscount: !item.rescue_pricing_enabled && item.manual_discount_percentage > 0,
+    manualDiscount:
+      !item.rescue_pricing_enabled && item.manual_discount_percentage > 0,
     isAutoDiscount,
     importPrice: item.import_price || 0,
   };
