@@ -18,6 +18,85 @@ const posController = {
     }
   },
 
+  async getOpenTransactions(req, res) {
+    try {
+      const transactions = await posService.getOpenTransactions(req.user._id);
+      return res.status(200).json({
+        success: true,
+        message: "Lấy danh sách transaction đang mở thành công",
+        data: transactions,
+      });
+    } catch (error) {
+      console.error("POS get open transactions error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Không thể lấy danh sách transaction đang mở",
+      });
+    }
+  },
+
+  async holdTransaction(req, res) {
+    try {
+      const order = await posService.holdTransaction(
+        req.params.transactionId,
+        req.user._id,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Đã hold Sales Transaction",
+        data: {
+          _id: order._id,
+          order_code: order.order_code,
+          is_on_hold: order.is_on_hold,
+        },
+      });
+    } catch (error) {
+      console.error("POS hold transaction error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("không thể") ||
+        error.message.includes("đã đóng")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể hold transaction",
+      });
+    }
+  },
+
+  async resumeTransaction(req, res) {
+    try {
+      const result = await posService.resumeTransaction(
+        req.params.transactionId,
+        req.user._id,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Đã mở lại Sales Transaction",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS resume transaction error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("không thể") ||
+        error.message.includes("đã đóng")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể mở lại transaction",
+      });
+    }
+  },
+
   async getProductList(req, res) {
     try {
       const result = await posService.getProducts({
@@ -59,6 +138,214 @@ const posController = {
       return res.status(500).json({
         success: false,
         message: error.message || "Không thể lấy danh mục bán hàng",
+      });
+    }
+  },
+
+  async resolveCustomerByQr(req, res) {
+    try {
+      const customer = await posService.resolveCustomerFromQr(req.body?.qr_data);
+      return res.status(200).json({
+        success: true,
+        message: "Quét QR khách hàng thành công",
+        data: customer,
+      });
+    } catch (error) {
+      console.error("POS resolve customer by QR error:", error);
+      const status =
+        error.message.includes("Thiếu") ||
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("Không thể")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể quét QR khách hàng",
+      });
+    }
+  },
+
+  async searchCustomers(req, res) {
+    try {
+      const customers = await posService.searchCustomers(
+        req.query.keyword || req.query.q,
+        req.query.limit,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Tìm khách hàng thành công",
+        data: customers,
+      });
+    } catch (error) {
+      console.error("POS search customers error:", error);
+      const status = error.message.includes("Thiếu") ? 400 : 409;
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể tìm kiếm khách hàng",
+      });
+    }
+  },
+
+  async assignCustomer(req, res) {
+    try {
+      const result = await posService.assignCustomerToTransaction(
+        req.params.transactionId,
+        req.user._id,
+        req.body.user_id,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Gán khách hàng vào transaction thành công",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS assign customer error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("đã đóng")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể gán khách hàng",
+      });
+    }
+  },
+
+  async getCustomerCoupons(req, res) {
+    try {
+      const data = await posService.getTransactionCustomerCoupons(
+        req.params.transactionId,
+        req.user._id,
+        {
+          user_id: req.query.user_id,
+          order_amount: req.query.order_amount,
+        },
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Lấy coupon khách hàng thành công",
+        data,
+      });
+    } catch (error) {
+      console.error("POS get customer coupons error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("chưa có khách hàng")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể lấy coupon khách hàng",
+      });
+    }
+  },
+
+  async redeemCustomerCoupon(req, res) {
+    try {
+      const result = await posService.redeemCouponForCustomer(
+        req.params.transactionId,
+        req.user._id,
+        req.body.coupon_id,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Đổi coupon bằng điểm thành công",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS redeem customer coupon error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("Vui lòng") ||
+        error.message.includes("không đủ") ||
+        error.message.includes("hết số lượng") ||
+        error.message.includes("không hoạt động") ||
+        error.message.includes("hết hạn") ||
+        error.message.includes("không thể đổi") ||
+        error.message.includes("đã đóng")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể đổi coupon bằng điểm",
+      });
+    }
+  },
+
+  async applyCoupon(req, res) {
+    try {
+      const result = await posService.applyCouponToTransaction(
+        req.params.transactionId,
+        req.user._id,
+        req.body.coupon_code,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Áp mã giảm giá thành công",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS apply coupon error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("Vui lòng") ||
+        error.message.includes("tối thiểu") ||
+        error.message.includes("đã đóng") ||
+        error.message.includes("chưa sở hữu")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể áp mã giảm giá",
+      });
+    }
+  },
+
+  async removeCoupon(req, res) {
+    try {
+      const result = await posService.removeCouponFromTransaction(
+        req.params.transactionId,
+        req.user._id,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Xóa mã giảm giá thành công",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS remove coupon error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("đã đóng")
+          ? 400
+          : error.message.includes("Không tìm thấy")
+            ? 404
+            : 409;
+
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể xóa mã giảm giá",
       });
     }
   },

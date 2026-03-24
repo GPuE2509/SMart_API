@@ -14,6 +14,13 @@ router.post(
 );
 
 router.get(
+  "/transactions/open",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.getOpenTransactions,
+);
+
+router.get(
   "/products",
   authenticateUser,
   authorizeRoles("seller_staff"),
@@ -27,11 +34,74 @@ router.get(
   posController.getCategories,
 );
 
+router.post(
+  "/customers/resolve-qr",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.resolveCustomerByQr,
+);
+
+router.get(
+  "/customers/search",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.searchCustomers,
+);
+
 router.get(
   "/transactions/:transactionId",
   authenticateUser,
   authorizeRoles("seller_staff"),
   posController.getTransactionDetail,
+);
+
+router.post(
+  "/transactions/:transactionId/hold",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.holdTransaction,
+);
+
+router.post(
+  "/transactions/:transactionId/resume",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.resumeTransaction,
+);
+
+router.patch(
+  "/transactions/:transactionId/customer",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.assignCustomer,
+);
+
+router.get(
+  "/transactions/:transactionId/customer-coupons",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.getCustomerCoupons,
+);
+
+router.post(
+  "/transactions/:transactionId/customer-coupons/redeem",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.redeemCustomerCoupon,
+);
+
+router.post(
+  "/transactions/:transactionId/coupon/apply",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.applyCoupon,
+);
+
+router.delete(
+  "/transactions/:transactionId/coupon",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.removeCoupon,
 );
 
 router.post(
