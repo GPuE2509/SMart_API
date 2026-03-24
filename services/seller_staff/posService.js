@@ -411,6 +411,59 @@ class PosService {
     };
   }
 
+  _extractBarcodeFromScan(rawValue) {
+    if (rawValue === null || rawValue === undefined) {
+      throw new Error("Thiếu dữ liệu mã vạch");
+    }
+
+    if (typeof rawValue === "object") {
+      const rawObj = rawValue;
+      const barcodeCandidate =
+        rawObj.barcode || rawObj.code || rawObj.value || rawObj.scan_data;
+
+      if (!barcodeCandidate) {
+        throw new Error("Dữ liệu mã vạch không hợp lệ");
+      }
+
+      return String(barcodeCandidate).trim();
+    }
+
+    const raw = String(rawValue).trim();
+    if (!raw) {
+      throw new Error("Dữ liệu mã vạch không hợp lệ");
+    }
+
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(raw);
+        const barcodeCandidate =
+          parsed.barcode || parsed.code || parsed.value || parsed.scan_data;
+        if (barcodeCandidate) {
+          return String(barcodeCandidate).trim();
+        }
+      } catch (error) {
+        // Ignore parse error and fallback to raw text.
+      }
+    }
+
+    if (raw.includes("://")) {
+      try {
+        const parsedUrl = new URL(raw);
+        const barcodeFromUrl =
+          parsedUrl.searchParams.get("barcode") ||
+          parsedUrl.searchParams.get("code") ||
+          parsedUrl.searchParams.get("value");
+        if (barcodeFromUrl) {
+          return String(barcodeFromUrl).trim();
+        }
+      } catch (error) {
+        // Ignore URL parse error and fallback to raw text.
+      }
+    }
+
+    return raw;
+  }
+
   _isCouponInValidWindow(coupon, now = new Date()) {
     if (!coupon || coupon.status !== "active") return false;
     if (coupon.start_date && new Date(coupon.start_date) > now) return false;
@@ -906,6 +959,29 @@ class PosService {
 
     await this.recalculateTransactionTotals(order._id, staffId);
     return this.getTransactionById(order._id, staffId);
+  }
+
+  async addProductToTransactionByBarcode(transactionId, staffId, payload = {}) {
+    const barcode = this._extractBarcodeFromScan(payload.barcode || payload.scan_data || payload);
+    const quantity = Number(payload.quantity || 1);
+
+    if (!quantity || quantity < 1) {
+      throw new Error("Số lượng phải lớn hơn hoặc bằng 1");
+    }
+
+    const productUnit = await ProductUnit.findOne({
+      barcode,
+      is_active: true,
+    }).select("_id");
+
+    if (!productUnit) {
+      throw new Error("Không tìm thấy sản phẩm với mã vạch đã quét");
+    }
+
+    return this.addProductToTransaction(transactionId, staffId, {
+      product_unit_id: productUnit._id,
+      quantity,
+    });
   }
 
   async updateItemQuantity(transactionId, itemId, staffId, newQuantity) {
