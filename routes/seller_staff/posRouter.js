@@ -62,6 +62,13 @@ router.post(
   posController.completeCashPayment,
 );
 
+router.post(
+  "/transactions/:transactionId/complete-cod",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.completeCodPayment,
+);
+
 router.get(
   "/transactions/:transactionId/payment-status",
   authenticateUser,
@@ -74,6 +81,13 @@ router.delete(
   authenticateUser,
   authorizeRoles("seller_staff"),
   posController.deleteTransaction,
+);
+
+router.post(
+  "/transactions/:transactionId/issue-receipt",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.issueReceipt,
 );
 
 module.exports = router;

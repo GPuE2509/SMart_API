@@ -161,3 +161,26 @@ exports.getCostRetailTrendChart = async (req, res) => {
     });
   }
 };
+
+/**
+ * Get After-tax Revenue Report
+ * GET /api/v1/admin/reports/after-tax-revenue
+ * Query params: start_date, end_date
+ */
+exports.getAfterTaxRevenueReport = async (req, res) => {
+  try {
+    const result = await financeReportService.getAfterTaxRevenueReport(req.query);
+
+    res.json({
+      success: true,
+      message: "Lấy báo cáo doanh thu sau khấu trừ thành công",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Không thể lấy báo cáo doanh thu sau khấu trừ",
+      error: error.message,
+    });
+  }
+};
