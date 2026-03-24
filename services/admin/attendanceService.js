@@ -3,6 +3,27 @@ const StaffAttendance = require('../../models/StaffAttendance');
 const mongoose = require('mongoose');
 const { uploadImage } = require('../../utils/uploadImage');
 
+const parseLocalDateBoundary = (dateStr, isEnd = false) => {
+  if (!dateStr) return null;
+  const parts = String(dateStr).split('-').map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) {
+    const fallback = new Date(dateStr);
+    if (Number.isNaN(fallback.getTime())) return null;
+    if (isEnd) {
+      fallback.setHours(23, 59, 59, 999);
+    } else {
+      fallback.setHours(0, 0, 0, 0);
+    }
+    return fallback;
+  }
+
+  const [year, month, day] = parts;
+  if (isEnd) {
+    return new Date(year, month - 1, day, 23, 59, 59, 999);
+  }
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
+};
+
 class AttendanceService {
   // Register face descriptor for staff
   async registerStaffFace(userId, faceDescriptor, faceImage) {
@@ -64,10 +85,11 @@ class AttendanceService {
 
       const existingAttendance = await StaffAttendance.findOne({
         user_id: userId,
-        check_in_time: { $gte: today, $lt: tomorrow }
+        check_in_time: { $gte: today, $lt: tomorrow },
+        status: 'checked_in',
       });
 
-      if (existingAttendance && existingAttendance.status !== 'checked_out') {
+      if (existingAttendance) {
         throw new Error('Already checked in today');
       }
 
@@ -118,7 +140,7 @@ class AttendanceService {
         user_id: userId,
         check_in_time: { $gte: today, $lt: tomorrow },
         status: 'checked_in'
-      });
+      }).sort({ check_in_time: -1 });
 
       if (!attendance) {
         throw new Error('No check-in record found for today. Please check-in first.');
@@ -151,11 +173,16 @@ class AttendanceService {
       
       if (startDate || endDate) {
         query.check_in_time = {};
-        if (startDate) query.check_in_time.$gte = new Date(startDate);
+        if (startDate) {
+          const start = parseLocalDateBoundary(startDate, false);
+          if (start) query.check_in_time.$gte = start;
+        }
         if (endDate) {
-          const end = new Date(endDate);
-          end.setHours(23, 59, 59, 999);
-          query.check_in_time.$lte = end;
+          const end = parseLocalDateBoundary(endDate, true);
+          if (end) query.check_in_time.$lte = end;
+        }
+        if (Object.keys(query.check_in_time).length === 0) {
+          delete query.check_in_time;
         }
       }
 
@@ -182,11 +209,16 @@ class AttendanceService {
       const matchStage = {};
       if (startDate || endDate) {
         matchStage.check_in_time = {};
-        if (startDate) matchStage.check_in_time.$gte = new Date(startDate);
+        if (startDate) {
+          const start = parseLocalDateBoundary(startDate, false);
+          if (start) matchStage.check_in_time.$gte = start;
+        }
         if (endDate) {
-          const end = new Date(endDate);
-          end.setHours(23, 59, 59, 999);
-          matchStage.check_in_time.$lte = end;
+          const end = parseLocalDateBoundary(endDate, true);
+          if (end) matchStage.check_in_time.$lte = end;
+        }
+        if (Object.keys(matchStage.check_in_time).length === 0) {
+          delete matchStage.check_in_time;
         }
       }
       if (Object.keys(matchStage).length > 0) {

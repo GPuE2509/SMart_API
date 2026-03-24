@@ -16,6 +16,36 @@ const SALARY_CONFIG = {
 };
 
 class PayrollAdminService {
+  resolvePayrollDateRange(month, year, customConfig = {}) {
+    const monthStartDate = new Date(year, month - 1, 1);
+    const monthEndDate = new Date(year, month, 0, 23, 59, 59, 999);
+
+    let startDate = monthStartDate;
+    let endDate = monthEndDate;
+
+    if (customConfig.start_date && customConfig.end_date) {
+      startDate = new Date(customConfig.start_date);
+      endDate = new Date(customConfig.end_date);
+
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        throw new Error("Invalid payroll date range");
+      }
+
+      if (startDate > endDate) {
+        throw new Error("Payroll start date must be before end date");
+      }
+
+      if (endDate > monthEndDate) {
+        throw new Error("Payroll end date cannot be after selected month/year");
+      }
+
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+    }
+
+    return { startDate, endDate, monthStartDate, monthEndDate };
+  }
+
   /**
    * Calculate staff payroll for a specific month
    */
@@ -30,9 +60,9 @@ class PayrollAdminService {
         throw new Error("Can only calculate payroll for staff members");
       }
 
-      // Get date range for the month
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+      // Get date range for payroll period (full month by default)
+      const { startDate, endDate, monthStartDate, monthEndDate } =
+        this.resolvePayrollDateRange(month, year, customConfig);
 
       // Calculate attendance data
       const attendanceData = await this.calculateAttendanceData(
@@ -64,19 +94,35 @@ class PayrollAdminService {
       const hoursBasedSalary = attendanceData.total_work_hours * hourlyRate;
 
       // Calculate attendance rate
-      const standardWorkDays = SALARY_CONFIG.STANDARD_WORK_DAYS_PER_MONTH;
+      const periodDays =
+        Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+      const monthDays =
+        Math.floor((monthEndDate - monthStartDate) / (1000 * 60 * 60 * 24)) + 1;
+      const standardWorkDays = Math.max(
+        1,
+        Math.round(
+          (SALARY_CONFIG.STANDARD_WORK_DAYS_PER_MONTH * periodDays) / monthDays,
+        ),
+      );
       const attendanceRate = Math.min(
         (attendanceData.total_work_days / standardWorkDays) * 100,
         100,
       );
 
-      // Check if payslip already exists
-      let payslip = await Payslip.findOne({ user_id: userId, month, year });
+      // Only update when the exact payroll period already exists.
+      // This allows creating multiple payslips in the same month/year.
+      let payslip = await Payslip.findOne({
+        user_id: userId,
+        period_start_date: startDate,
+        period_end_date: endDate,
+      });
 
       const payslipData = {
         user_id: userId,
         month,
         year,
+        period_start_date: startDate,
+        period_end_date: endDate,
         total_work_hours: attendanceData.total_work_hours,
         total_work_days: attendanceData.total_work_days,
         hourly_rate: hourlyRate,
@@ -201,10 +247,38 @@ class PayrollAdminService {
   async getPayrollReport(month, year, options = {}) {
     try {
       const { role, search, page = 1, limit = 10 } = options;
+      const targetMonth = parseInt(month);
+      const targetYear = parseInt(year);
+      const monthStart = new Date(targetYear, targetMonth - 1, 1);
+      const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
 
       const pipeline = [
         {
-          $match: { month: parseInt(month), year: parseInt(year) },
+          $match: {
+            $or: [
+              {
+                period_start_date: { $exists: true, $ne: null, $gte: monthStart },
+                period_end_date: { $exists: true, $ne: null, $lte: monthEnd },
+              },
+              {
+                $and: [
+                  {
+                    $or: [
+                      { period_start_date: { $exists: false } },
+                      { period_start_date: null },
+                    ],
+                  },
+                  {
+                    $or: [
+                      { period_end_date: { $exists: false } },
+                      { period_end_date: null },
+                    ],
+                  },
+                  { month: targetMonth, year: targetYear },
+                ],
+              },
+            ],
+          },
         },
         {
           $lookup: {
@@ -261,6 +335,8 @@ class PayrollAdminService {
                 _id: 1,
                 month: 1,
                 year: 1,
+                period_start_date: 1,
+                period_end_date: 1,
                 total_work_hours: 1,
                 total_work_days: 1,
                 attendance_rate: 1,
@@ -497,10 +573,44 @@ class PayrollAdminService {
   /**
    * Export payroll report to Excel
    */
-  async exportToExcel(month, year, role) {
+  async exportToExcel(month, year, options = {}) {
     try {
+      const normalizedOptions =
+        typeof options === "string" ? { role: options } : options || {};
+      const { role, search } = normalizedOptions;
+      const targetMonth = parseInt(month);
+      const targetYear = parseInt(year);
+      const monthStart = new Date(targetYear, targetMonth - 1, 1);
+      const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
       const pipeline = [
-        { $match: { month: parseInt(month), year: parseInt(year) } },
+        {
+          $match: {
+            $or: [
+              {
+                period_start_date: { $exists: true, $ne: null, $gte: monthStart },
+                period_end_date: { $exists: true, $ne: null, $lte: monthEnd },
+              },
+              {
+                $and: [
+                  {
+                    $or: [
+                      { period_start_date: { $exists: false } },
+                      { period_start_date: null },
+                    ],
+                  },
+                  {
+                    $or: [
+                      { period_end_date: { $exists: false } },
+                      { period_end_date: null },
+                    ],
+                  },
+                  { month: targetMonth, year: targetYear },
+                ],
+              },
+            ],
+          },
+        },
         {
           $lookup: {
             from: "users",
@@ -516,12 +626,24 @@ class PayrollAdminService {
         pipeline.push({ $match: { "user.role": role } });
       }
 
+      if (search) {
+        pipeline.push({
+          $match: {
+            $or: [
+              { "user.full_name": new RegExp(search, "i") },
+              { "user.email": new RegExp(search, "i") },
+            ],
+          },
+        });
+      }
+
       pipeline.push({ $sort: { "user.full_name": 1 } });
 
       const payslips = await Payslip.aggregate(pipeline);
 
       const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet(`Payroll ${month}/${year}`);
+      const safeSheetName = `Payroll ${String(month).padStart(2, "0")}-${year}`;
+      const worksheet = workbook.addWorksheet(safeSheetName);
 
       // Header
       worksheet.columns = [
@@ -593,10 +715,44 @@ class PayrollAdminService {
   /**
    * Export payroll report to PDF
    */
-  async exportToPDF(month, year, role) {
+  async exportToPDF(month, year, options = {}) {
     try {
+      const normalizedOptions =
+        typeof options === "string" ? { role: options } : options || {};
+      const { role, search } = normalizedOptions;
+      const targetMonth = parseInt(month);
+      const targetYear = parseInt(year);
+      const monthStart = new Date(targetYear, targetMonth - 1, 1);
+      const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
       const pipeline = [
-        { $match: { month: parseInt(month), year: parseInt(year) } },
+        {
+          $match: {
+            $or: [
+              {
+                period_start_date: { $exists: true, $ne: null, $gte: monthStart },
+                period_end_date: { $exists: true, $ne: null, $lte: monthEnd },
+              },
+              {
+                $and: [
+                  {
+                    $or: [
+                      { period_start_date: { $exists: false } },
+                      { period_start_date: null },
+                    ],
+                  },
+                  {
+                    $or: [
+                      { period_end_date: { $exists: false } },
+                      { period_end_date: null },
+                    ],
+                  },
+                  { month: targetMonth, year: targetYear },
+                ],
+              },
+            ],
+          },
+        },
         {
           $lookup: {
             from: "users",
@@ -610,6 +766,17 @@ class PayrollAdminService {
 
       if (role) {
         pipeline.push({ $match: { "user.role": role } });
+      }
+
+      if (search) {
+        pipeline.push({
+          $match: {
+            $or: [
+              { "user.full_name": new RegExp(search, "i") },
+              { "user.email": new RegExp(search, "i") },
+            ],
+          },
+        });
       }
 
       pipeline.push({ $sort: { "user.full_name": 1 } });
