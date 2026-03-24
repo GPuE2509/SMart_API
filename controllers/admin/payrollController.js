@@ -14,6 +14,8 @@ class PayrollAdminController {
         hourly_rate,
         base_salary,
         sales_commission_rate,
+        start_date,
+        end_date,
       } = req.body;
       const adminId = req.user._id;
 
@@ -24,12 +26,25 @@ class PayrollAdminController {
         });
       }
 
+      if ((start_date && !end_date) || (!start_date && end_date)) {
+        return res.status(400).json({
+          success: false,
+          message: "Both start_date and end_date are required when using custom date range",
+        });
+      }
+
       const result = await payrollService.calculateStaffPayroll(
         user_id,
         parseInt(month),
         parseInt(year),
         adminId,
-        { hourly_rate, base_salary, sales_commission_rate },
+        {
+          hourly_rate,
+          base_salary,
+          sales_commission_rate,
+          start_date,
+          end_date,
+        },
       );
 
       return res.status(200).json(result);
@@ -47,8 +62,15 @@ class PayrollAdminController {
    */
   async bulkCalculatePayroll(req, res) {
     try {
-      const { month, year, hourly_rate, base_salary, sales_commission_rate } =
-        req.body;
+      const {
+        month,
+        year,
+        hourly_rate,
+        base_salary,
+        sales_commission_rate,
+        start_date,
+        end_date,
+      } = req.body;
       const adminId = req.user._id;
 
       if (!month || !year) {
@@ -58,11 +80,24 @@ class PayrollAdminController {
         });
       }
 
+      if ((start_date && !end_date) || (!start_date && end_date)) {
+        return res.status(400).json({
+          success: false,
+          message: "Both start_date and end_date are required when using custom date range",
+        });
+      }
+
       const result = await payrollService.bulkCalculatePayroll(
         parseInt(month),
         parseInt(year),
         adminId,
-        { hourly_rate, base_salary, sales_commission_rate },
+        {
+          hourly_rate,
+          base_salary,
+          sales_commission_rate,
+          start_date,
+          end_date,
+        },
       );
 
       return res.status(200).json(result);
@@ -251,7 +286,7 @@ class PayrollAdminController {
    */
   async exportToExcel(req, res) {
     try {
-      const { month, year, role } = req.query;
+      const { month, year, role, search } = req.query;
 
       if (!month || !year) {
         return res.status(400).json({
@@ -260,7 +295,10 @@ class PayrollAdminController {
         });
       }
 
-      const workbook = await payrollService.exportToExcel(month, year, role);
+      const workbook = await payrollService.exportToExcel(month, year, {
+        role,
+        search,
+      });
 
       res.setHeader(
         "Content-Type",
@@ -287,7 +325,7 @@ class PayrollAdminController {
    */
   async exportToPDF(req, res) {
     try {
-      const { month, year, role } = req.query;
+      const { month, year, role, search } = req.query;
 
       if (!month || !year) {
         return res.status(400).json({
@@ -296,7 +334,10 @@ class PayrollAdminController {
         });
       }
 
-      const doc = await payrollService.exportToPDF(month, year, role);
+      const doc = await payrollService.exportToPDF(month, year, {
+        role,
+        search,
+      });
 
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
