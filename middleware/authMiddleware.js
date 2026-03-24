@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const StaffAttendance = require('../models/StaffAttendance');
 
 const authenticateUser = async (req, res, next) => {
     // Get token from HTTP-only cookie first, fallback to Authorization header for backwards compatibility
@@ -67,10 +68,46 @@ const isStaff = (req, res, next) => {
     next();
 };
 
+// Require active check-in for seller_staff and repository_staff before accessing feature routes
+const requireStaffCheckIn = async (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: 'Yeu cau xac thuc.' });
+    }
+
+    if (!['seller_staff', 'repository_staff'].includes(req.user.role)) {
+        return next();
+    }
+
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        const activeAttendance = await StaffAttendance.findOne({
+            user_id: req.user._id,
+            check_in_time: { $gte: today, $lt: tomorrow },
+            status: 'checked_in'
+        }).select('_id');
+
+        if (!activeAttendance) {
+            return res.status(403).json({
+                code: 'STAFF_NOT_CHECKED_IN',
+                message: 'Ban chua check-in. Vui long check-in de su dung cac chuc nang.'
+            });
+        }
+
+        next();
+    } catch (err) {
+        return res.status(500).json({ message: 'Loi kiem tra trang thai check-in.' });
+    }
+};
+
 module.exports = {
     authenticateUser,
     authorizeRoles,
     verifyToken,
     isAdmin,
-    isStaff
+    isStaff,
+    requireStaffCheckIn
 };
