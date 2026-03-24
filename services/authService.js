@@ -4,6 +4,8 @@ const bcrypt = require('bcrypt');
 const emailService = require('./emailService');
 const crypto = require('crypto');
 const { sendLoginVerification } = require('./socketService');
+const QRCode = require('qrcode');
+const { uploadImage } = require('../utils/uploadImage');
 
 const hashPassword = async (password) => {
     const saltRounds = 10;
@@ -23,6 +25,23 @@ const generateToken = (user) => {
 
 const generateOTP = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+const generateCustomerQrCodeUrl = async (user) => {
+    const qrPayload = {
+        type: 'smart_customer',
+        user_id: String(user._id),
+        email: user.email || '',
+        phone: user.phone || '',
+    };
+
+    const qrBase64 = await QRCode.toDataURL(JSON.stringify(qrPayload), {
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 512,
+    });
+
+    return uploadImage(qrBase64, 'smart/customer_qr');
 };
 
 exports.verifyToken = (token) => {
@@ -53,6 +72,13 @@ exports.signup = async (userData) => {
                 existingUser.otp = otp;
                 existingUser.otpExpiry = otpExpiry;
                 existingUser.updated_at = new Date();
+
+                // Keep QR data aligned with latest account info.
+                try {
+                    existingUser.qr_code_url = await generateCustomerQrCodeUrl(existingUser);
+                } catch (qrError) {
+                    console.error('[Auth] Không thể tạo QR cho tài khoản chưa xác thực:', qrError.message);
+                }
 
                 await existingUser.save();
 
@@ -88,6 +114,14 @@ exports.signup = async (userData) => {
         });
 
         const savedUser = await user.save();
+
+        // Generate customer QR and upload to Cloudinary right after user is created.
+        try {
+            savedUser.qr_code_url = await generateCustomerQrCodeUrl(savedUser);
+            await savedUser.save();
+        } catch (qrError) {
+            console.error('[Auth] Không thể tạo QR cho user mới:', qrError.message);
+        }
 
         // Send OTP email
         await emailService.sendOTPEmail(email, otp, full_name);

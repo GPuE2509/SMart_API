@@ -61,7 +61,7 @@ app.use(
       "http://192.168.3.207:8081",
       "http://10.10.10.53:8081",
       "http://10.255.100.24:8081",
-      "https://essgenius.vercel.app",
+      "http://10.64.175.124:8081",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

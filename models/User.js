@@ -45,6 +45,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       maxlength: 500000, // Increased to 500KB for base64 images
     },
+    qr_code_url: {
+      type: String,
+      maxlength: 500000,
+    },
     loyalty_points: {
       type: Number,
       default: 0,
