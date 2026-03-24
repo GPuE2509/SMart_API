@@ -4,11 +4,13 @@ const orderController = require("../../controllers/seller_staff/orderController"
 const {
   authenticateUser,
   authorizeRoles,
+  requireStaffCheckIn,
 } = require("../../middleware/authMiddleware");
 
 // All routes require authentication and seller_staff role
 router.use(authenticateUser);
 router.use(authorizeRoles("seller_staff", "admin"));
+router.use(requireStaffCheckIn);
 
 // GET /api/v1/seller-staff/orders/stats - Get order statistics (must be before /:orderId)
 router.get("/stats", orderController.getOrderStats);
