@@ -402,6 +402,37 @@ const posController = {
     }
   },
 
+  async addItemByBarcode(req, res) {
+    try {
+      const result = await posService.addProductToTransactionByBarcode(
+        req.params.transactionId,
+        req.user._id,
+        req.body,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Quét mã vạch và thêm sản phẩm vào giao dịch thành công",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS add item by barcode error:", error);
+      const status =
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("Số lượng")
+          ? 400
+          : error.message.includes("Không tìm thấy") ||
+              error.message.includes("không tìm thấy")
+            ? 404
+            : 409;
+
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể thêm sản phẩm bằng mã vạch",
+      });
+    }
+  },
+
   async removeItem(req, res) {
     try {
       const result = await posService.removeItemFromTransaction(
