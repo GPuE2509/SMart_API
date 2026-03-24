@@ -111,6 +111,13 @@ router.post(
   posController.addItem,
 );
 
+router.post(
+  "/transactions/:transactionId/items/scan-barcode",
+  authenticateUser,
+  authorizeRoles("seller_staff"),
+  posController.addItemByBarcode,
+);
+
 router.delete(
   "/transactions/:transactionId/items/:itemId",
   authenticateUser,
