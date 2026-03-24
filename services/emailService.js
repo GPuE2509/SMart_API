@@ -454,3 +454,82 @@ exports.sendRescuePricingNotification = async (email, fullName, notifications, n
         throw new Error('Không thể gửi thông báo giảm giá cứu hộ.');
     }
 };
+
+// Send POS receipt email
+exports.sendPosReceiptEmail = async (email, receiptData) => {
+    try {
+        const {
+            orderCode,
+            issuedAt,
+            paymentMethod,
+            paymentStatus,
+            subtotal,
+            tax,
+            discount,
+            total,
+            staffName,
+            items = [],
+        } = receiptData;
+
+        const itemRows = items
+            .map(
+                (item) => `
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #ddd;">${item.name}</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${item.quantity}</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">${Number(item.unitPrice || 0).toLocaleString("vi-VN")}đ</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">${Number(item.lineTotal || 0).toLocaleString("vi-VN")}đ</td>
+                </tr>
+            `,
+            )
+            .join("");
+
+        const mailOptions = {
+            from: `"SMart System" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: `Biên lai thanh toán POS - ${orderCode}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 760px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
+                    <div style="background-color: #1677ff; padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
+                        <h1 style="color: white; margin: 0;">SMart POS Receipt</h1>
+                    </div>
+                    <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                        <p style="margin: 0 0 8px; color: #333;"><strong>Mã đơn:</strong> ${orderCode}</p>
+                        <p style="margin: 0 0 8px; color: #333;"><strong>Thời gian:</strong> ${issuedAt}</p>
+                        <p style="margin: 0 0 8px; color: #333;"><strong>Thu ngân:</strong> ${staffName || "-"}</p>
+                        <p style="margin: 0 0 8px; color: #333;"><strong>Phương thức thanh toán:</strong> ${paymentMethod}</p>
+                        <p style="margin: 0 0 16px; color: #333;"><strong>Trạng thái thanh toán:</strong> ${paymentStatus}</p>
+
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+                            <thead>
+                                <tr style="background: #f5f5f5;">
+                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Sản phẩm</th>
+                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">SL</th>
+                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Đơn giá</th>
+                                    <th style="padding: 10px; border: 1px solid #ddd; text-align: right;">Thành tiền</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${itemRows}
+                            </tbody>
+                        </table>
+
+                        <div style="text-align: right; color: #333;">
+                            <p style="margin: 4px 0;">Tạm tính: <strong>${Number(subtotal || 0).toLocaleString("vi-VN")}đ</strong></p>
+                            <p style="margin: 4px 0;">Thuế: <strong>${Number(tax || 0).toLocaleString("vi-VN")}đ</strong></p>
+                            <p style="margin: 4px 0;">Giảm giá: <strong>${Number(discount || 0).toLocaleString("vi-VN")}đ</strong></p>
+                            <p style="margin: 8px 0; font-size: 18px;">Tổng thanh toán: <strong>${Number(total || 0).toLocaleString("vi-VN")}đ</strong></p>
+                        </div>
+                    </div>
+                </div>
+            `,
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+        console.log("POS receipt email sent:", info.messageId);
+        return { success: true, messageId: info.messageId };
+    } catch (error) {
+        console.error("Error sending POS receipt email:", error);
+        throw new Error("Không thể gửi email biên lai.");
+    }
+};

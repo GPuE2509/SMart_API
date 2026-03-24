@@ -97,4 +97,17 @@ router.get(
   salesReportController.getCostRetailTrendChart,
 );
 
+/**
+ * @route   GET /api/v1/admin/reports/after-tax-revenue
+ * @desc    Report on total business revenue after deductions
+ * @access  Admin only
+ * @query   start_date, end_date
+ */
+router.get(
+  "/after-tax-revenue",
+  authenticateUser,
+  authorizeRoles("admin"),
+  salesReportController.getAfterTaxRevenueReport,
+);
+
 module.exports = router;
