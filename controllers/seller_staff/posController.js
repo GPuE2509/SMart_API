@@ -243,6 +243,49 @@ const posController = {
     }
   },
 
+  async completeCodPayment(req, res) {
+    try {
+      const result = await posService.completeCodPayment(
+        req.params.transactionId,
+        req.user._id,
+        req.body,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Hoàn thành giao dịch COD thành công",
+        data: {
+          _id: result.order._id,
+          order_code: result.order.order_code,
+          payment_method: result.order.payment_method,
+          payment_status: result.order.payment_status,
+          order_status: result.order.order_status,
+          final_amount: result.order.final_amount,
+          cash_received: result.cash_received,
+          change_amount: result.change_amount,
+        },
+      });
+    } catch (error) {
+      console.error("POS complete COD payment error:", error);
+      const status =
+        error.message.includes("chưa có sản phẩm") ||
+        error.message.includes("tổng tiền") ||
+        error.message.includes("đã được thanh toán") ||
+        error.message.includes("không hợp lệ") ||
+        error.message.includes("Tiền khách đưa")
+          ? 400
+          : error.message.includes("không đủ")
+            ? 409
+            : error.message.includes("không tìm thấy")
+              ? 404
+              : 409;
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể hoàn thành giao dịch COD",
+      });
+    }
+  },
+
   async checkPaymentStatus(req, res) {
     try {
       const result = await posService.checkAndUpdatePaymentStatus(
@@ -293,6 +336,37 @@ const posController = {
       return res.status(status).json({
         success: false,
         message: error.message || "Không thể xóa Sales Transaction",
+      });
+    }
+  },
+
+  async issueReceipt(req, res) {
+    try {
+      const result = await posService.issueReceipt(
+        req.params.transactionId,
+        req.user._id,
+        req.body,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: result.email_sent
+          ? "Xuất biên lai và gửi email thành công"
+          : "Xuất biên lai thành công",
+        data: result,
+      });
+    } catch (error) {
+      console.error("POS issue receipt error:", error);
+      const status =
+        error.message.includes("chưa có sản phẩm") ||
+        error.message.includes("không hợp lệ")
+          ? 400
+          : error.message.includes("không tìm thấy")
+            ? 404
+            : 409;
+      return res.status(status).json({
+        success: false,
+        message: error.message || "Không thể xuất biên lai",
       });
     }
   },

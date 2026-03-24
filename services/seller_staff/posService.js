@@ -4,6 +4,8 @@ const OrderDetail = require("../../models/OrderDetail");
 const Product = require("../../models/Product");
 const ProductUnit = require("../../models/ProductUnit");
 const ProductBatch = require("../../models/ProductBatch");
+const User = require("../../models/User");
+const { sendPosReceiptEmail } = require("../emailService");
 const { payos } = require("../../config/payment");
 
 const removeVietnameseDiacritics = (str) => {
@@ -694,6 +696,49 @@ class PosService {
     return latestOrder;
   }
 
+  async completeCodPayment(transactionId, staffId, payload = {}) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+
+    if (order.payment_status === "paid") {
+      throw new Error("Đơn hàng đã được thanh toán trước đó");
+    }
+
+    const itemCount = await OrderDetail.countDocuments({ order_id: order._id });
+    if (itemCount === 0) {
+      throw new Error("Transaction chưa có sản phẩm để hoàn thành");
+    }
+
+    await this.recalculateTransactionTotals(order._id, staffId);
+    const latestOrder = await Order.findById(order._id);
+
+    if (!latestOrder || latestOrder.final_amount <= 0) {
+      throw new Error("Không thể hoàn thành đơn có tổng tiền bằng 0");
+    }
+
+    const cashReceived = Number(payload.cash_received);
+    if (!Number.isFinite(cashReceived) || cashReceived <= 0) {
+      throw new Error("Tiền khách đưa phải lớn hơn 0");
+    }
+
+    const roundedCashReceived = Math.round(cashReceived);
+    if (roundedCashReceived < latestOrder.final_amount) {
+      throw new Error("Tiền khách đưa không đủ để thanh toán");
+    }
+
+    const changeAmount = Math.round(roundedCashReceived - latestOrder.final_amount);
+
+    latestOrder.payment_method = "cod";
+    latestOrder.payment_status = "paid";
+    latestOrder.order_status = "completed";
+    await latestOrder.save();
+
+    return {
+      order: latestOrder,
+      cash_received: roundedCashReceived,
+      change_amount: changeAmount,
+    };
+  }
+
   async checkAndUpdatePaymentStatus(transactionId, staffId) {
     const order = await this.findOwnedTransaction(transactionId, staffId);
 
@@ -736,6 +781,74 @@ class PosService {
       order_status: order.order_status,
       final_amount: order.final_amount,
       provider_status: providerStatus,
+    };
+  }
+
+  async issueReceipt(transactionId, staffId, payload = {}) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+    const orderDetails = await OrderDetail.find({
+      order_id: order._id,
+    }).populate({
+      path: "product_unit_id",
+      populate: [
+        { path: "product_id", select: "name" },
+        { path: "unit_id", select: "name" },
+      ],
+    });
+
+    if (orderDetails.length === 0) {
+      throw new Error("Transaction chưa có sản phẩm để xuất biên lai");
+    }
+
+    const staff = await User.findById(order.staff_id).select("username full_name");
+
+    const receiptData = {
+      order_id: order._id,
+      order_code: order.order_code,
+      issued_at: new Date(),
+      payment_method: order.payment_method || "cash",
+      payment_status: order.payment_status || "unpaid",
+      subtotal: Math.round(order.total_amount || 0),
+      tax_amount: Math.round(order.tax_amount || 0),
+      discount_amount: Math.round(order.discount_amount || 0),
+      final_amount: Math.round(order.final_amount || 0),
+      staff_name: staff?.full_name || staff?.username || "Staff",
+      items: orderDetails.map((detail) => ({
+        product_name: detail.product_unit_id?.product_id?.name || "Sản phẩm",
+        unit_name: detail.product_unit_id?.unit_id?.name || "",
+        quantity: detail.quantity || 0,
+        unit_price: Math.round(detail.unit_price || 0),
+        line_total: Math.round(detail.total_price || 0),
+      })),
+    };
+
+    const email = String(payload.email || "").trim();
+    if (email) {
+      await sendPosReceiptEmail(email, {
+        orderCode: receiptData.order_code,
+        issuedAt: new Date(receiptData.issued_at).toLocaleString("vi-VN"),
+        paymentMethod: receiptData.payment_method,
+        paymentStatus: receiptData.payment_status,
+        subtotal: receiptData.subtotal,
+        tax: receiptData.tax_amount,
+        discount: receiptData.discount_amount,
+        total: receiptData.final_amount,
+        staffName: receiptData.staff_name,
+        items: receiptData.items.map((item) => ({
+          name: item.unit_name
+            ? `${item.product_name} (${item.unit_name})`
+            : item.product_name,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+          lineTotal: item.line_total,
+        })),
+      });
+    }
+
+    return {
+      ...receiptData,
+      email_sent: Boolean(email),
+      email_to: email || null,
     };
   }
 }
