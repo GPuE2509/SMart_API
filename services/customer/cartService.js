@@ -1,6 +1,80 @@
-const { CartItem, ProductUnit, Product, RecipeIngredient, Recipe, ProductBatch } = require("../../models");
+const {
+  CartItem,
+  ProductUnit,
+  Product,
+  RecipeIngredient,
+  Recipe,
+  ProductBatch,
+} = require("../../models");
 
 class CartService {
+  _isBatchItemSellable(batchItem, now = new Date()) {
+    if (!batchItem) return false;
+    if (batchItem.status !== "onsale") return false;
+    if (Number(batchItem.current_quantity || 0) <= 0) return false;
+
+    if (!batchItem.expiry_date) return true;
+    const expiry = new Date(batchItem.expiry_date);
+    if (Number.isNaN(expiry.getTime())) return true;
+
+    return expiry >= now;
+  }
+
+  _getBatchItemExpiryTime(batchItem) {
+    if (!batchItem?.expiry_date) return Number.MAX_SAFE_INTEGER;
+    const time = new Date(batchItem.expiry_date).getTime();
+    return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+  }
+
+  async findNearestSellableBatchItem(productId, unitId, minQuantity = 1) {
+    const batches = await ProductBatch.find({
+      is_deleted: false,
+      items: {
+        $elemMatch: {
+          product_id: productId,
+          unit_id: unitId,
+          status: "onsale",
+          current_quantity: { $gte: minQuantity },
+        },
+      },
+    }).lean();
+
+    const candidates = [];
+
+    for (const batch of batches) {
+      for (const item of batch.items || []) {
+        if (item.product_id.toString() !== productId.toString()) continue;
+        if (item.unit_id.toString() !== unitId.toString()) continue;
+        if (!this._isBatchItemSellable(item)) continue;
+        if (Number(item.current_quantity || 0) < Number(minQuantity || 1)) {
+          continue;
+        }
+
+        candidates.push({
+          batch,
+          batchItem: item,
+          expiryTime: this._getBatchItemExpiryTime(item),
+        });
+      }
+    }
+
+    if (!candidates.length) {
+      return null;
+    }
+
+    candidates.sort((a, b) => {
+      if (a.expiryTime !== b.expiryTime) {
+        return a.expiryTime - b.expiryTime;
+      }
+      return (
+        new Date(a.batch.created_at).getTime() -
+        new Date(b.batch.created_at).getTime()
+      );
+    });
+
+    return candidates[0];
+  }
+
   async getAvailableBatchQuantity(productId, unitId) {
     const batches = await ProductBatch.find({
       is_deleted: false,
@@ -20,8 +94,7 @@ class CartService {
           (item) =>
             item.product_id.toString() === productId.toString() &&
             item.unit_id.toString() === unitId.toString() &&
-            item.status === "onsale" &&
-            item.current_quantity > 0,
+            this._isBatchItemSellable(item),
         )
         .reduce((itemSum, item) => itemSum + item.current_quantity, 0);
 
@@ -113,22 +186,14 @@ class CartService {
 
         // Find available batch and apply active discount policy (rescue or manual)
         if (product && unit) {
-          const batch = await ProductBatch.findOne({
-            "items.product_id": product._id,
-            "items.unit_id": unit._id,
-            "items.current_quantity": { $gte: item.quantity },
-            "items.status": "onsale",
-            is_deleted: false,
-          }).sort({ created_at: 1 });
+          const allocation = await this.findNearestSellableBatchItem(
+            product._id,
+            unit._id,
+            item.quantity,
+          );
 
-          if (batch) {
-            const batchItem = batch.items.find(
-              (bItem) =>
-                bItem.product_id.toString() === product._id.toString() &&
-                bItem.unit_id.toString() === unit._id.toString() &&
-                bItem.current_quantity >= item.quantity &&
-                bItem.status === "onsale"
-            );
+          if (allocation) {
+            const batchItem = allocation.batchItem;
 
             if (batchItem) {
               let discountPercentage = 0;
@@ -173,7 +238,7 @@ class CartService {
           unit,
           rescuePricing,
         };
-      })
+      }),
     );
 
     return enhancedItems;
@@ -210,7 +275,7 @@ class CartService {
     const cartItem = await CartItem.findOneAndUpdate(
       { _id: cartItemId, user_id: userId },
       { quantity },
-      { new: true }
+      { new: true },
     );
 
     if (!cartItem) {
@@ -302,9 +367,9 @@ class CartService {
         const cartItem = await this.addToCart(
           userId,
           productUnit._id,
-          quantity
+          quantity,
         );
-        
+
         addedItems.push({
           product_name: product.name,
           quantity,
@@ -323,7 +388,10 @@ class CartService {
         success: false,
         message: "Không thể thêm nguyên liệu vào giỏ hàng",
         addedItems: [],
-        errors: errors.length > 0 ? errors : [{ message: "Không có nguyên liệu hợp lệ để thêm" }],
+        errors:
+          errors.length > 0
+            ? errors
+            : [{ message: "Không có nguyên liệu hợp lệ để thêm" }],
       };
     }
 
