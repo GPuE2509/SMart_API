@@ -5,6 +5,8 @@ const Product = require("../../models/Product");
 const ProductUnit = require("../../models/ProductUnit");
 const ProductBatch = require("../../models/ProductBatch");
 const User = require("../../models/User");
+const Coupon = require("../../models/Coupon");
+const UserCoupon = require("../../models/UserCoupon");
 const { sendPosReceiptEmail } = require("../emailService");
 const { payos } = require("../../config/payment");
 
@@ -41,7 +43,91 @@ class PosService {
       payment_status: "unpaid",
       order_status: "pending",
       order_type: "pos",
+      is_on_hold: false,
     });
+  }
+
+  async getOpenTransactions(staffId) {
+    const orders = await Order.find({
+      staff_id: staffId,
+      order_type: "pos",
+      payment_status: "unpaid",
+      order_status: { $nin: ["completed", "cancelled", "returned"] },
+    })
+      .populate("user_id", "full_name phone")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    if (orders.length === 0) return [];
+
+    const itemCountByOrder = await OrderDetail.aggregate([
+      {
+        $match: {
+          order_id: { $in: orders.map((order) => order._id) },
+        },
+      },
+      {
+        $group: {
+          _id: "$order_id",
+          item_count: { $sum: 1 },
+          total_quantity: { $sum: "$quantity" },
+        },
+      },
+    ]);
+
+    const itemCountMap = new Map(
+      itemCountByOrder.map((item) => [String(item._id), item]),
+    );
+
+    return orders.map((order) => {
+      const countInfo = itemCountMap.get(String(order._id));
+      return {
+        _id: order._id,
+        order_code: order.order_code,
+        user_id: order.user_id,
+        final_amount: order.final_amount || 0,
+        payment_status: order.payment_status,
+        order_status: order.order_status,
+        is_on_hold: Boolean(order.is_on_hold),
+        item_count: countInfo?.item_count || 0,
+        total_quantity: countInfo?.total_quantity || 0,
+        updated_at: order.updatedAt || order.created_at,
+      };
+    });
+  }
+
+  async holdTransaction(transactionId, staffId) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+
+    if (order.payment_status === "paid") {
+      throw new Error("Không thể hold transaction đã thanh toán");
+    }
+
+    if (["completed", "cancelled", "returned"].includes(order.order_status)) {
+      throw new Error("Transaction đã đóng, không thể hold");
+    }
+
+    order.is_on_hold = true;
+    await order.save();
+
+    return order;
+  }
+
+  async resumeTransaction(transactionId, staffId) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+
+    if (order.payment_status === "paid") {
+      throw new Error("Transaction đã thanh toán, không thể mở lại");
+    }
+
+    if (["completed", "cancelled", "returned"].includes(order.order_status)) {
+      throw new Error("Transaction đã đóng, không thể mở lại");
+    }
+
+    order.is_on_hold = false;
+    await order.save();
+
+    return this.getTransactionById(order._id, staffId);
   }
 
   async getProducts(filters = {}) {
@@ -240,6 +326,452 @@ class PosService {
     );
   }
 
+  _normalizePhone(phone) {
+    if (!phone) return "";
+    return String(phone).replace(/[^\d+]/g, "").trim();
+  }
+
+  _buildCustomerPayload(user) {
+    return {
+      _id: user._id,
+      full_name: user.full_name || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      loyalty_points: user.loyalty_points || 0,
+    };
+  }
+
+  _extractLookupFromQr(rawValue) {
+    if (rawValue === null || rawValue === undefined) {
+      throw new Error("Thiếu dữ liệu QR");
+    }
+
+    if (typeof rawValue === "object") {
+      const rawObj = rawValue;
+      return {
+        user_id: rawObj.user_id || rawObj.userId || rawObj.id || null,
+        email: rawObj.email || null,
+        phone: rawObj.phone || null,
+      };
+    }
+
+    const raw = String(rawValue).trim();
+    if (!raw) {
+      throw new Error("Dữ liệu QR không hợp lệ");
+    }
+
+    if (mongoose.Types.ObjectId.isValid(raw)) {
+      return { user_id: raw, email: null, phone: null };
+    }
+
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(raw);
+        return {
+          user_id: parsed.user_id || parsed.userId || parsed.id || null,
+          email: parsed.email || null,
+          phone: parsed.phone || null,
+        };
+      } catch (error) {
+        // Ignore parse error and fallback to regex parsing.
+      }
+    }
+
+    if (raw.includes("://")) {
+      try {
+        const parsedUrl = new URL(raw);
+        const userIdFromUrl =
+          parsedUrl.searchParams.get("user_id") ||
+          parsedUrl.searchParams.get("userId") ||
+          parsedUrl.searchParams.get("id");
+        const emailFromUrl = parsedUrl.searchParams.get("email");
+        const phoneFromUrl = parsedUrl.searchParams.get("phone");
+
+        if (userIdFromUrl || emailFromUrl || phoneFromUrl) {
+          return {
+            user_id: userIdFromUrl,
+            email: emailFromUrl,
+            phone: phoneFromUrl,
+          };
+        }
+      } catch (error) {
+        // Ignore URL parse error and fallback to regex parsing.
+      }
+    }
+
+    const userIdToken = raw.match(/[a-fA-F0-9]{24}/)?.[0] || null;
+    const emailToken =
+      raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || null;
+    const phoneToken = raw.match(/(?:\+?\d[\d\s.-]{7,}\d)/)?.[0] || null;
+
+    return {
+      user_id: userIdToken,
+      email: emailToken,
+      phone: this._normalizePhone(phoneToken),
+    };
+  }
+
+  _isCouponInValidWindow(coupon, now = new Date()) {
+    if (!coupon || coupon.status !== "active") return false;
+    if (coupon.start_date && new Date(coupon.start_date) > now) return false;
+    if (coupon.end_date && new Date(coupon.end_date) < now) return false;
+    return true;
+  }
+
+  _calculateCouponDiscount(coupon, orderAmount) {
+    if (!coupon) return 0;
+    let discount = 0;
+
+    if (coupon.discount_type === "percent") {
+      discount = Math.round((orderAmount * (coupon.discount_value || 0)) / 100);
+      if (coupon.max_discount_amount && coupon.max_discount_amount > 0) {
+        discount = Math.min(discount, coupon.max_discount_amount);
+      }
+    } else {
+      discount = Math.round(coupon.discount_value || 0);
+    }
+
+    return Math.max(0, Math.min(discount, orderAmount));
+  }
+
+  async _buildCustomerCoupons(user, orderAmount) {
+    const now = new Date();
+
+    const walletEntries = await UserCoupon.find({
+      user_id: user._id,
+      is_used: false,
+    })
+      .populate("coupon_id")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const walletCoupons = walletEntries
+      .filter((entry) => entry.coupon_id)
+      .map((entry) => {
+        const coupon = entry.coupon_id;
+        const isActiveNow = this._isCouponInValidWindow(coupon, now);
+        const meetsMinOrder =
+          isActiveNow &&
+          Number(orderAmount) >= Number(coupon.min_order_value || 0);
+
+        return {
+          user_coupon_id: entry._id,
+          coupon,
+          can_apply: Boolean(isActiveNow && meetsMinOrder),
+          preview_discount: meetsMinOrder
+            ? this._calculateCouponDiscount(coupon, Number(orderAmount) || 0)
+            : 0,
+          reason: isActiveNow
+            ? meetsMinOrder
+              ? ""
+              : `Đơn hàng tối thiểu ${Number(coupon.min_order_value || 0).toLocaleString("vi-VN")}đ`
+            : "Coupon không còn hiệu lực",
+        };
+      });
+
+    const redeemableCouponDocs = await Coupon.find({
+      status: "active",
+      points_required: { $gt: 0 },
+      $and: [
+        { $or: [{ start_date: null }, { start_date: { $lte: now } }] },
+        { $or: [{ end_date: null }, { end_date: { $gte: now } }] },
+      ],
+    })
+      .sort({ points_required: 1, createdAt: -1 })
+      .lean();
+
+    const redeemableCoupons = await Promise.all(
+      redeemableCouponDocs.map(async (coupon) => {
+        let quantityRemaining = null;
+        if (coupon.quantity_limit !== undefined && coupon.quantity_limit !== null) {
+          const issuedCount = await UserCoupon.countDocuments({
+            coupon_id: coupon._id,
+          });
+          quantityRemaining = Math.max(0, Number(coupon.quantity_limit) - issuedCount);
+        }
+
+        const canRedeemByPoints =
+          Number(user.loyalty_points || 0) >= Number(coupon.points_required || 0);
+        const meetsMinOrder =
+          Number(orderAmount || 0) >= Number(coupon.min_order_value || 0);
+        const hasQuantity = quantityRemaining === null || quantityRemaining > 0;
+
+        return {
+          coupon,
+          can_redeem: Boolean(canRedeemByPoints && hasQuantity),
+          can_apply_after_redeem: Boolean(canRedeemByPoints && hasQuantity && meetsMinOrder),
+          quantity_remaining: quantityRemaining,
+          preview_discount: meetsMinOrder
+            ? this._calculateCouponDiscount(coupon, Number(orderAmount) || 0)
+            : 0,
+        };
+      }),
+    );
+
+    return {
+      wallet_coupons: walletCoupons,
+      redeemable_coupons: redeemableCoupons,
+    };
+  }
+
+  async resolveCustomerFromQr(qrData) {
+    const lookup = this._extractLookupFromQr(qrData);
+
+    const query = {
+      role: "customer",
+      status: "active",
+      isVerified: true,
+    };
+
+    if (lookup.user_id && mongoose.Types.ObjectId.isValid(lookup.user_id)) {
+      query._id = lookup.user_id;
+    } else if (lookup.email) {
+      query.email = new RegExp(`^${lookup.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    } else if (lookup.phone) {
+      query.phone = new RegExp(
+        this._normalizePhone(lookup.phone).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i",
+      );
+    } else {
+      throw new Error("Không thể xác định khách hàng từ QR");
+    }
+
+    const user = await User.findOne(query).select(
+      "full_name email phone loyalty_points role status isVerified",
+    );
+
+    if (!user) {
+      throw new Error("Không tìm thấy khách hàng từ mã QR");
+    }
+
+    return this._buildCustomerPayload(user);
+  }
+
+  async searchCustomers(keyword, limit = 20) {
+    const rawKeyword = String(keyword || "").trim();
+    if (!rawKeyword) {
+      throw new Error("Thiếu từ khóa tìm kiếm");
+    }
+
+    const escaped = rawKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const normalizedPhone = this._normalizePhone(rawKeyword);
+
+    const customers = await User.find({
+      role: "customer",
+      status: "active",
+      isVerified: true,
+      $or: [
+        { full_name: new RegExp(escaped, "i") },
+        { email: new RegExp(escaped, "i") },
+        { phone: new RegExp(normalizedPhone || escaped, "i") },
+      ],
+    })
+      .select("full_name email phone loyalty_points")
+      .sort({ updated_at: -1 })
+      .limit(Number(limit) || 20)
+      .lean();
+
+    return customers.map((user) => this._buildCustomerPayload(user));
+  }
+
+  async assignCustomerToTransaction(transactionId, staffId, userId) {
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error("Mã khách hàng không hợp lệ");
+    }
+
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+    if (["cancelled", "completed", "returned"].includes(order.order_status)) {
+      throw new Error("Transaction đã đóng, không thể gán khách hàng");
+    }
+
+    const customer = await User.findOne({
+      _id: userId,
+      role: "customer",
+      status: "active",
+      isVerified: true,
+    });
+
+    if (!customer) {
+      throw new Error("Không tìm thấy khách hàng hợp lệ");
+    }
+
+    order.user_id = customer._id;
+    await order.save();
+    await this.recalculateTransactionTotals(order._id, staffId);
+
+    return this.getTransactionById(order._id, staffId);
+  }
+
+  async getTransactionCustomerCoupons(transactionId, staffId, options = {}) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+
+    const customerId = options.user_id || order.user_id;
+    if (!customerId || !mongoose.Types.ObjectId.isValid(customerId)) {
+      throw new Error("Transaction chưa có khách hàng");
+    }
+
+    const customer = await User.findOne({
+      _id: customerId,
+      role: "customer",
+      status: "active",
+      isVerified: true,
+    }).select("full_name email phone loyalty_points");
+
+    if (!customer) {
+      throw new Error("Không tìm thấy khách hàng hợp lệ");
+    }
+
+    const orderAmount = Number(options.order_amount || order.total_amount || 0);
+    const coupons = await this._buildCustomerCoupons(customer, orderAmount);
+
+    return {
+      customer: this._buildCustomerPayload(customer),
+      order_amount: orderAmount,
+      coupons,
+    };
+  }
+
+  async redeemCouponForCustomer(transactionId, staffId, couponId) {
+    if (!mongoose.Types.ObjectId.isValid(couponId)) {
+      throw new Error("Mã coupon không hợp lệ");
+    }
+
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+    if (["cancelled", "completed", "returned"].includes(order.order_status)) {
+      throw new Error("Transaction đã đóng, không thể đổi coupon");
+    }
+
+    if (!order.user_id) {
+      throw new Error("Vui lòng gán khách hàng trước khi đổi coupon");
+    }
+
+    const customer = await User.findOne({
+      _id: order.user_id,
+      role: "customer",
+      status: "active",
+      isVerified: true,
+    });
+
+    if (!customer) {
+      throw new Error("Không tìm thấy khách hàng hợp lệ");
+    }
+
+    const coupon = await Coupon.findById(couponId);
+    if (!coupon || coupon.status !== "active") {
+      throw new Error("Coupon hiện không hoạt động");
+    }
+
+    if (!this._isCouponInValidWindow(coupon)) {
+      throw new Error("Coupon đã hết hạn hoặc chưa đến thời gian áp dụng");
+    }
+
+    const requiredPoints = Number(coupon.points_required || 0);
+    if (requiredPoints <= 0) {
+      throw new Error("Coupon này không thể đổi bằng điểm");
+    }
+
+    if (Number(customer.loyalty_points || 0) < requiredPoints) {
+      throw new Error("Điểm tích lũy không đủ để đổi coupon này");
+    }
+
+    if (coupon.quantity_limit !== undefined && coupon.quantity_limit !== null) {
+      const issuedCount = await UserCoupon.countDocuments({
+        coupon_id: coupon._id,
+      });
+      if (issuedCount >= Number(coupon.quantity_limit)) {
+        throw new Error("Coupon đã hết số lượng");
+      }
+    }
+
+    customer.loyalty_points = Number(customer.loyalty_points || 0) - requiredPoints;
+    await customer.save();
+
+    const userCoupon = await UserCoupon.create({
+      user_id: customer._id,
+      coupon_id: coupon._id,
+    });
+
+    const refreshed = await this.getTransactionCustomerCoupons(order._id, staffId);
+
+    return {
+      user_coupon_id: userCoupon._id,
+      customer: {
+        _id: customer._id,
+        loyalty_points: customer.loyalty_points,
+      },
+      coupon,
+      coupons: refreshed.coupons,
+    };
+  }
+
+  async applyCouponToTransaction(transactionId, staffId, couponCode) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+    if (["cancelled", "completed", "returned"].includes(order.order_status)) {
+      throw new Error("Transaction đã đóng, không thể áp mã giảm giá");
+    }
+
+    if (!order.user_id) {
+      throw new Error("Vui lòng gán khách hàng trước khi áp mã giảm giá");
+    }
+
+    const rawCode = String(couponCode || "").trim().toUpperCase();
+    if (!rawCode) {
+      throw new Error("Mã giảm giá không hợp lệ");
+    }
+
+    await this.recalculateTransactionTotals(order._id, staffId);
+    const latestOrder = await Order.findById(order._id);
+    if (!latestOrder) {
+      throw new Error("Không tìm thấy transaction POS");
+    }
+
+    const coupon = await Coupon.findOne({
+      code: rawCode,
+      status: "active",
+    });
+
+    if (!coupon || !this._isCouponInValidWindow(coupon)) {
+      throw new Error("Mã giảm giá không hợp lệ hoặc đã hết hạn");
+    }
+
+    if (Number(latestOrder.total_amount || 0) < Number(coupon.min_order_value || 0)) {
+      throw new Error(
+        `Đơn hàng tối thiểu ${Number(coupon.min_order_value || 0).toLocaleString("vi-VN")}đ để sử dụng mã này`,
+      );
+    }
+
+    if (Number(coupon.points_required || 0) > 0) {
+      const userCoupon = await UserCoupon.findOne({
+        user_id: latestOrder.user_id,
+        coupon_id: coupon._id,
+        is_used: false,
+      });
+
+      if (!userCoupon) {
+        throw new Error("Khách hàng chưa sở hữu mã giảm giá này");
+      }
+    }
+
+    latestOrder.coupon_id = coupon._id;
+    await latestOrder.save();
+    await this.recalculateTransactionTotals(latestOrder._id, staffId);
+
+    return this.getTransactionById(latestOrder._id, staffId);
+  }
+
+  async removeCouponFromTransaction(transactionId, staffId) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+    if (["cancelled", "completed", "returned"].includes(order.order_status)) {
+      throw new Error("Transaction đã đóng, không thể xóa mã giảm giá");
+    }
+
+    order.coupon_id = null;
+    await order.save();
+    await this.recalculateTransactionTotals(order._id, staffId);
+
+    return this.getTransactionById(order._id, staffId);
+  }
+
   async findOwnedTransaction(transactionId, staffId) {
     if (!mongoose.Types.ObjectId.isValid(transactionId)) {
       throw new Error("Mã transaction không hợp lệ");
@@ -261,6 +793,13 @@ class PosService {
   async getTransactionById(transactionId, staffId) {
     const order = await this.findOwnedTransaction(transactionId, staffId);
 
+    const hydratedOrder = await Order.findById(order._id)
+      .populate("user_id", "full_name email phone loyalty_points")
+      .populate(
+        "coupon_id",
+        "code discount_type discount_value min_order_value max_discount_amount points_required",
+      );
+
     const orderDetails = await OrderDetail.find({
       order_id: order._id,
     }).populate({
@@ -272,7 +811,7 @@ class PosService {
     });
 
     return {
-      order,
+      order: hydratedOrder || order,
       items: orderDetails,
     };
   }
@@ -574,6 +1113,7 @@ class PosService {
     order.tax_amount = 0;
     order.discount_amount = 0;
     order.final_amount = 0;
+    order.coupon_id = null;
     order.order_status = "cancelled";
     order.payment_status = "unpaid";
     await order.save();
@@ -605,11 +1145,79 @@ class PosService {
 
     order.total_amount = Math.round(totalAmount);
     order.tax_amount = Math.round(taxAmount);
-    order.discount_amount = 0;
+
+    let discountAmount = 0;
+    if (order.coupon_id) {
+      const coupon = await Coupon.findById(order.coupon_id);
+      const isCouponUsable =
+        coupon &&
+        this._isCouponInValidWindow(coupon) &&
+        order.total_amount >= Number(coupon.min_order_value || 0);
+
+      if (isCouponUsable) {
+        discountAmount = this._calculateCouponDiscount(coupon, order.total_amount);
+      } else {
+        order.coupon_id = null;
+      }
+    }
+
+    order.discount_amount = Math.round(discountAmount);
     order.final_amount = Math.round(order.total_amount + order.tax_amount);
+    order.final_amount = Math.max(
+      0,
+      Math.round(order.final_amount - order.discount_amount),
+    );
     await order.save();
 
     return order;
+  }
+
+  async _consumePointsCouponIfNeeded(order) {
+    if (!order?.user_id || !order?.coupon_id) return;
+
+    const coupon = await Coupon.findById(order.coupon_id).lean();
+    if (!coupon || Number(coupon.points_required || 0) <= 0) return;
+
+    const userCoupon = await UserCoupon.findOne({
+      user_id: order.user_id,
+      coupon_id: order.coupon_id,
+      is_used: false,
+    }).sort({ createdAt: 1 });
+
+    if (!userCoupon) {
+      console.warn(
+        `[POS-Coupon] Không tìm thấy userCoupon chưa dùng cho user ${order.user_id} với coupon ${order.coupon_id}`,
+      );
+      return;
+    }
+
+    userCoupon.is_used = true;
+    userCoupon.used_at = new Date();
+    await userCoupon.save();
+  }
+
+  async _awardLoyaltyPoints(order) {
+    try {
+      if (!order?.user_id || order.payment_status !== "paid") return;
+
+      const pointsEarned = Math.floor(Number(order.final_amount || 0) / 1000);
+      if (pointsEarned <= 0) return;
+
+      await User.findByIdAndUpdate(order.user_id, {
+        $inc: { loyalty_points: pointsEarned },
+      });
+
+      console.log(
+        `[POS-Loyalty] Cong ${pointsEarned} diem cho user ${order.user_id} (don ${order.order_code})`,
+      );
+    } catch (error) {
+      console.error("[POS-Loyalty] Loi khi cong diem:", error.message);
+    }
+  }
+
+  async _finalizeBenefitsAfterPayment(order) {
+    await this._consumePointsCouponIfNeeded(order);
+    await this._awardLoyaltyPoints(order);
   }
 
   async createPayOSPayment(transactionId, staffId) {
@@ -693,6 +1301,8 @@ class PosService {
     latestOrder.order_status = "completed";
     await latestOrder.save();
 
+    await this._finalizeBenefitsAfterPayment(latestOrder);
+
     return latestOrder;
   }
 
@@ -732,6 +1342,8 @@ class PosService {
     latestOrder.order_status = "completed";
     await latestOrder.save();
 
+    await this._finalizeBenefitsAfterPayment(latestOrder);
+
     return {
       order: latestOrder,
       cash_received: roundedCashReceived,
@@ -767,6 +1379,7 @@ class PosService {
           order.payment_status = "paid";
           order.order_status = "processing";
           await order.save();
+          await this._finalizeBenefitsAfterPayment(order);
         }
       } catch (error) {
         console.error("POS PayOS status check error:", error.message);

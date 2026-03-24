@@ -60,6 +60,10 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: ["online", "pos"],
     },
+    is_on_hold: {
+      type: Boolean,
+      default: false,
+    },
     coupon_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Coupon",
