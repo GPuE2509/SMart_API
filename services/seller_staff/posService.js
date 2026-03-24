@@ -367,6 +367,115 @@ class PosService {
     return this.getTransactionById(order._id, staffId);
   }
 
+  async updateItemQuantity(transactionId, itemId, staffId, newQuantity) {
+    const order = await this.findOwnedTransaction(transactionId, staffId);
+
+    if (["cancelled", "completed", "returned"].includes(order.order_status)) {
+      throw new Error("Transaction đã đóng, không thể cập nhật sản phẩm");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      throw new Error("Mã item không hợp lệ");
+    }
+
+    const qty = Number(newQuantity);
+    if (qty < 0 || !Number.isInteger(qty)) {
+      throw new Error("Số lượng không hợp lệ");
+    }
+
+    // Nếu quantity = 0, tự động xóa item
+    if (qty === 0) {
+      return this.removeItemFromTransaction(transactionId, itemId, staffId);
+    }
+
+    const detail = await OrderDetail.findOne({
+      _id: itemId,
+      order_id: order._id,
+    }).populate("product_unit_id");
+
+    if (!detail) {
+      throw new Error("Không tìm thấy item trong transaction");
+    }
+
+    const oldQuantity = detail.quantity;
+    const quantityDiff = qty - oldQuantity;
+
+    if (quantityDiff === 0) {
+      // Không có thay đổi
+      return this.getTransactionById(order._id, staffId);
+    }
+
+    const productUnit = detail.product_unit_id;
+    if (
+      !productUnit ||
+      !productUnit.is_active ||
+      !productUnit.product_id ||
+      !productUnit.unit_id
+    ) {
+      throw new Error("Sản phẩm không tồn tại hoặc đã ngừng kinh doanh");
+    }
+
+    // Nếu tăng số lượng, cần kiểm tra tồn kho
+    if (quantityDiff > 0) {
+      const batch = await ProductBatch.findOne({
+        "items.product_id": productUnit.product_id._id,
+        "items.unit_id": productUnit.unit_id._id,
+        "items.current_quantity": { $gte: quantityDiff },
+        "items.status": "onsale",
+        is_deleted: false,
+      }).sort({ created_at: 1 });
+
+      if (!batch) {
+        throw new Error(
+          `Không đủ tồn kho để tăng số lượng lên ${qty}. Tồn kho không đủ.`,
+        );
+      }
+    }
+
+    // Cập nhật batch hiện tại (hoàn trả hoặc trừ thêm)
+    if (detail.product_batch_id && detail.batch_item_id) {
+      const batch = await ProductBatch.findById(detail.product_batch_id);
+      if (batch) {
+        const batchItem = batch.items.id(detail.batch_item_id);
+        if (batchItem) {
+          // quantityDiff > 0: trừ thêm từ batch
+          // quantityDiff < 0: hoàn trả vào batch
+          batchItem.current_quantity =
+            (batchItem.current_quantity || 0) - quantityDiff;
+
+          if (batchItem.current_quantity === 0) {
+            batchItem.status = "sold";
+            batchItem.rescue_pricing_active = false;
+            batchItem.rescue_discount_percentage = 0;
+          } else if (batchItem.status === "sold") {
+            batchItem.status = "onsale";
+          }
+
+          await batch.save();
+        }
+      }
+    }
+
+    // Cập nhật tổng tồn kho sản phẩm
+    const product = await Product.findById(productUnit.product_id._id);
+    if (product) {
+      const quantityInBaseDiff = quantityDiff * (productUnit.exchange_value || 1);
+      product.total_stock = Math.max(
+        0,
+        (product.total_stock || 0) - quantityInBaseDiff,
+      );
+      await product.save();
+    }
+
+    // Cập nhật OrderDetail
+    detail.quantity = qty;
+    detail.total_price = Math.round(detail.unit_price * qty);
+    await detail.save();
+
+    await this.recalculateTransactionTotals(order._id, staffId);
+    return this.getTransactionById(order._id, staffId);
+  }
+
   async removeItemFromTransaction(transactionId, itemId, staffId) {
     const order = await this.findOwnedTransaction(transactionId, staffId);
 
