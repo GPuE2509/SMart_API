@@ -18,6 +18,31 @@ const isBatchItemSellable = (batchItem, now = new Date()) => {
   return expiry >= now;
 };
 
+const getBatchItemDiscountPercentage = (item) => {
+  if (
+    item?.rescue_pricing_enabled &&
+    item?.rescue_pricing_active &&
+    Number(item?.rescue_discount_percentage || 0) > 0
+  ) {
+    return Number(item.rescue_discount_percentage);
+  }
+
+  if (
+    !item?.rescue_pricing_enabled &&
+    Number(item?.manual_discount_percentage || 0) > 0
+  ) {
+    return Number(item.manual_discount_percentage);
+  }
+
+  return 0;
+};
+
+const getBatchItemExpiryTime = (item) => {
+  if (!item?.expiry_date) return Number.MAX_SAFE_INTEGER;
+  const t = new Date(item.expiry_date).getTime();
+  return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+};
+
 const productService = {
   /**
    * Get all products with filters (for customers)
@@ -87,7 +112,10 @@ const productService = {
 
         // Find max effective discount available for this product (rescue or manual)
         product.maxRescueDiscount = 0;
+        product.displayRescueDiscount = 0;
         product.discounted_stock = 0;
+        let nearestExpiryTime = Number.MAX_SAFE_INTEGER;
+        const discountedStockBreakdownMap = new Map();
         try {
           const batches = await ProductBatch.find({
             "items.product_id": product._id,
@@ -97,20 +125,7 @@ const productService = {
 
           for (let batch of batches) {
             for (let item of batch.items) {
-              let discountPercentage = 0;
-
-              if (
-                item.rescue_pricing_enabled &&
-                item.rescue_pricing_active &&
-                item.rescue_discount_percentage > 0
-              ) {
-                discountPercentage = item.rescue_discount_percentage;
-              } else if (
-                !item.rescue_pricing_enabled &&
-                item.manual_discount_percentage > 0
-              ) {
-                discountPercentage = item.manual_discount_percentage;
-              }
+              const discountPercentage = getBatchItemDiscountPercentage(item);
 
               if (
                 item.product_id.toString() === product._id.toString() &&
@@ -126,12 +141,38 @@ const productService = {
                 discountPercentage > 0
               ) {
                 product.discounted_stock += Number(item.current_quantity || 0);
+
+                const currentQty =
+                  Number(
+                    discountedStockBreakdownMap.get(discountPercentage) || 0,
+                  ) + Number(item.current_quantity || 0);
+                discountedStockBreakdownMap.set(discountPercentage, currentQty);
+              }
+
+              if (
+                item.product_id.toString() === product._id.toString() &&
+                isBatchItemSellable(item)
+              ) {
+                const expiryTime = getBatchItemExpiryTime(item);
+                if (expiryTime < nearestExpiryTime) {
+                  nearestExpiryTime = expiryTime;
+                  product.displayRescueDiscount = discountPercentage;
+                }
               }
             }
           }
         } catch (err) {
           console.error("Error fetching rescue pricing:", err);
         }
+
+        product.discounted_stock_breakdown = Array.from(
+          discountedStockBreakdownMap.entries(),
+        )
+          .map(([discount_percentage, quantity]) => ({
+            discount_percentage: Number(discount_percentage),
+            quantity: Number(quantity || 0),
+          }))
+          .sort((a, b) => b.discount_percentage - a.discount_percentage);
       }
 
       // Filter by price range if specified (BEFORE pagination)
@@ -224,7 +265,10 @@ const productService = {
         // Sum up current_quantity and find max effective discount
         let totalStock = 0;
         let maxRescueDiscount = 0;
+        let displayRescueDiscount = 0;
         let discountedStock = 0;
+        let nearestExpiryTime = Number.MAX_SAFE_INTEGER;
+        const discountedStockBreakdownMap = new Map();
 
         for (let batch of batches) {
           for (let item of batch.items) {
@@ -235,19 +279,7 @@ const productService = {
             ) {
               totalStock += item.current_quantity;
 
-              let discountPercentage = 0;
-              if (
-                item.rescue_pricing_enabled &&
-                item.rescue_pricing_active &&
-                item.rescue_discount_percentage > 0
-              ) {
-                discountPercentage = item.rescue_discount_percentage;
-              } else if (
-                !item.rescue_pricing_enabled &&
-                item.manual_discount_percentage > 0
-              ) {
-                discountPercentage = item.manual_discount_percentage;
-              }
+              const discountPercentage = getBatchItemDiscountPercentage(item);
 
               if (discountPercentage > maxRescueDiscount) {
                 maxRescueDiscount = discountPercentage;
@@ -255,6 +287,17 @@ const productService = {
 
               if (discountPercentage > 0) {
                 discountedStock += Number(item.current_quantity || 0);
+                const currentQty =
+                  Number(
+                    discountedStockBreakdownMap.get(discountPercentage) || 0,
+                  ) + Number(item.current_quantity || 0);
+                discountedStockBreakdownMap.set(discountPercentage, currentQty);
+              }
+
+              const expiryTime = getBatchItemExpiryTime(item);
+              if (expiryTime < nearestExpiryTime) {
+                nearestExpiryTime = expiryTime;
+                displayRescueDiscount = discountPercentage;
               }
             }
           }
@@ -262,7 +305,16 @@ const productService = {
 
         unit.available_stock = totalStock;
         unit.maxRescueDiscount = maxRescueDiscount;
+        unit.displayRescueDiscount = displayRescueDiscount;
         unit.discounted_stock = discountedStock;
+        unit.discounted_stock_breakdown = Array.from(
+          discountedStockBreakdownMap.entries(),
+        )
+          .map(([discount_percentage, quantity]) => ({
+            discount_percentage: Number(discount_percentage),
+            quantity: Number(quantity || 0),
+          }))
+          .sort((a, b) => b.discount_percentage - a.discount_percentage);
       }
 
       product.units = units;
@@ -276,6 +328,10 @@ const productService = {
       // Get max rescue discount across all units
       product.maxRescueDiscount = Math.max(
         ...units.map((u) => u.maxRescueDiscount || 0),
+        0,
+      );
+      product.displayRescueDiscount = Math.max(
+        ...units.map((u) => u.displayRescueDiscount || 0),
         0,
       );
 

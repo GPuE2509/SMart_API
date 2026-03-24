@@ -26,6 +26,183 @@ class CartService {
     return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
   }
 
+  _getBatchItemDiscountPercentage(batchItem) {
+    if (
+      batchItem?.rescue_pricing_enabled &&
+      batchItem?.rescue_pricing_active &&
+      Number(batchItem?.rescue_discount_percentage || 0) > 0
+    ) {
+      return Number(batchItem.rescue_discount_percentage);
+    }
+
+    if (
+      !batchItem?.rescue_pricing_enabled &&
+      Number(batchItem?.manual_discount_percentage || 0) > 0
+    ) {
+      return Number(batchItem.manual_discount_percentage);
+    }
+
+    return 0;
+  }
+
+  async _getSellableBatchCandidates(productId, unitId) {
+    const batches = await ProductBatch.find({
+      is_deleted: false,
+      items: {
+        $elemMatch: {
+          product_id: productId,
+          unit_id: unitId,
+          status: "onsale",
+          current_quantity: { $gt: 0 },
+        },
+      },
+    }).lean();
+
+    const candidates = [];
+
+    for (const batch of batches) {
+      for (const item of batch.items || []) {
+        if (item.product_id.toString() !== productId.toString()) continue;
+        if (item.unit_id.toString() !== unitId.toString()) continue;
+        if (!this._isBatchItemSellable(item)) continue;
+
+        candidates.push({
+          product_batch_id: String(batch._id),
+          batch_item_id: String(item._id),
+          available_quantity: Number(item.current_quantity || 0),
+          discount_percentage: this._getBatchItemDiscountPercentage(item),
+          expiry_time: this._getBatchItemExpiryTime(item),
+          created_at: new Date(batch.created_at).getTime(),
+        });
+      }
+    }
+
+    candidates.sort((a, b) => {
+      if (a.expiry_time !== b.expiry_time) {
+        return a.expiry_time - b.expiry_time;
+      }
+      return a.created_at - b.created_at;
+    });
+
+    return candidates;
+  }
+
+  async _buildPricingPreview(productUnit, quantity) {
+    const qty = Number(quantity || 0);
+    if (!qty || qty < 1) {
+      throw new Error("Số lượng không hợp lệ");
+    }
+
+    const productId = productUnit?.product_id?._id || productUnit?.product_id;
+    const unitId = productUnit?.unit_id?._id || productUnit?.unit_id;
+    const originalUnitPrice = Math.round(Number(productUnit?.price || 0));
+    const taxPercentage = Number(productUnit?.product_id?.tax_percentage || 0);
+
+    const candidates = await this._getSellableBatchCandidates(
+      productId,
+      unitId,
+    );
+    const discountedStockBreakdownMap = new Map();
+    let discountedAvailableQuantity = 0;
+
+    for (const candidate of candidates) {
+      if (candidate.discount_percentage > 0) {
+        discountedAvailableQuantity += Number(
+          candidate.available_quantity || 0,
+        );
+        const currentQty =
+          Number(
+            discountedStockBreakdownMap.get(candidate.discount_percentage) || 0,
+          ) + Number(candidate.available_quantity || 0);
+        discountedStockBreakdownMap.set(
+          candidate.discount_percentage,
+          currentQty,
+        );
+      }
+    }
+
+    const allocations = [];
+    let remaining = qty;
+
+    for (const candidate of candidates) {
+      if (remaining <= 0) break;
+
+      const take = Math.min(
+        remaining,
+        Number(candidate.available_quantity || 0),
+      );
+      if (take <= 0) continue;
+
+      const discountPercentage = Number(candidate.discount_percentage || 0);
+      const discountedUnitPrice = Math.round(
+        originalUnitPrice - (originalUnitPrice * discountPercentage) / 100,
+      );
+
+      allocations.push({
+        product_batch_id: candidate.product_batch_id,
+        batch_item_id: candidate.batch_item_id,
+        quantity: take,
+        original_unit_price: originalUnitPrice,
+        unit_price: discountedUnitPrice,
+        discount_percentage: discountPercentage,
+        is_discounted: discountPercentage > 0,
+        line_subtotal: Math.round(take * discountedUnitPrice),
+      });
+
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      throw new Error(
+        `Sản phẩm không đủ tồn kho trong lô bán (thiếu ${remaining} sản phẩm)`,
+      );
+    }
+
+    const lineOriginalSubtotal = Math.round(originalUnitPrice * qty);
+    const lineSubtotal = allocations.reduce(
+      (sum, item) => sum + Number(item.line_subtotal || 0),
+      0,
+    );
+    const lineSavings = Math.max(0, lineOriginalSubtotal - lineSubtotal);
+    const lineTaxAmount = Math.round((lineSubtotal * taxPercentage) / 100);
+    const discountedQuantity = allocations.reduce(
+      (sum, item) =>
+        sum + (item.is_discounted ? Number(item.quantity || 0) : 0),
+      0,
+    );
+    const displayDiscountPercentage = Number(
+      allocations[0]?.discount_percentage || 0,
+    );
+
+    const discountedStockBreakdown = Array.from(
+      discountedStockBreakdownMap.entries(),
+    )
+      .map(([discount_percentage, quantityValue]) => ({
+        discount_percentage: Number(discount_percentage),
+        quantity: Number(quantityValue || 0),
+      }))
+      .sort((a, b) => b.discount_percentage - a.discount_percentage);
+
+    return {
+      allocations,
+      original_unit_price: originalUnitPrice,
+      display_discount_percentage: displayDiscountPercentage,
+      discounted_quantity: discountedQuantity,
+      regular_quantity: qty - discountedQuantity,
+      line_original_subtotal: lineOriginalSubtotal,
+      line_subtotal: lineSubtotal,
+      line_savings: lineSavings,
+      line_tax_amount: lineTaxAmount,
+      line_total_with_tax: lineSubtotal + lineTaxAmount,
+      discounted_available_quantity: discountedAvailableQuantity,
+      discounted_stock_breakdown: discountedStockBreakdown,
+      available_quantity: candidates.reduce(
+        (sum, item) => sum + Number(item.available_quantity || 0),
+        0,
+      ),
+    };
+  }
+
   async findNearestSellableBatchItem(productId, unitId, minQuantity = 1) {
     const batches = await ProductBatch.find({
       is_deleted: false,
@@ -76,30 +253,14 @@ class CartService {
   }
 
   async getAvailableBatchQuantity(productId, unitId) {
-    const batches = await ProductBatch.find({
-      is_deleted: false,
-      items: {
-        $elemMatch: {
-          product_id: productId,
-          unit_id: unitId,
-          status: "onsale",
-          current_quantity: { $gt: 0 },
-        },
-      },
-    }).select("items");
-
-    return batches.reduce((sum, batch) => {
-      const batchItemQuantity = batch.items
-        .filter(
-          (item) =>
-            item.product_id.toString() === productId.toString() &&
-            item.unit_id.toString() === unitId.toString() &&
-            this._isBatchItemSellable(item),
-        )
-        .reduce((itemSum, item) => itemSum + item.current_quantity, 0);
-
-      return sum + batchItemQuantity;
-    }, 0);
+    const candidates = await this._getSellableBatchCandidates(
+      productId,
+      unitId,
+    );
+    return candidates.reduce(
+      (sum, item) => sum + Number(item.available_quantity || 0),
+      0,
+    );
   }
 
   /**
@@ -169,7 +330,7 @@ class CartService {
       })
       .sort({ createdAt: -1 });
 
-    // Enhance cart items with rescue pricing info
+    // Enhance cart items with FEFO mixed pricing info.
     const enhancedItems = await Promise.all(
       cartItems.map(async (item) => {
         const productUnit = item.product_unit_id;
@@ -184,49 +345,55 @@ class CartService {
           savings: 0,
         };
 
-        // Find available batch and apply active discount policy (rescue or manual)
+        let pricingDetail = {
+          allocations: [],
+          original_unit_price: productUnit?.price || 0,
+          display_discount_percentage: 0,
+          discounted_quantity: 0,
+          regular_quantity: item.quantity || 0,
+          line_original_subtotal:
+            (productUnit?.price || 0) * (item.quantity || 0),
+          line_subtotal: (productUnit?.price || 0) * (item.quantity || 0),
+          line_savings: 0,
+          line_tax_amount: Math.round(
+            ((productUnit?.price || 0) *
+              (item.quantity || 0) *
+              Number(product?.tax_percentage || 0)) /
+              100,
+          ),
+          line_total_with_tax: 0,
+          discounted_available_quantity: 0,
+          discounted_stock_breakdown: [],
+          available_quantity: 0,
+        };
+        pricingDetail.line_total_with_tax =
+          pricingDetail.line_subtotal + pricingDetail.line_tax_amount;
+
+        // Build FEFO pricing preview by current cart quantity.
         if (product && unit) {
-          const allocation = await this.findNearestSellableBatchItem(
-            product._id,
-            unit._id,
-            item.quantity,
-          );
+          try {
+            pricingDetail = await this._buildPricingPreview(
+              productUnit,
+              item.quantity,
+            );
 
-          if (allocation) {
-            const batchItem = allocation.batchItem;
-
-            if (batchItem) {
-              let discountPercentage = 0;
-
-              if (
-                batchItem.rescue_pricing_enabled &&
-                batchItem.rescue_pricing_active &&
-                batchItem.rescue_discount_percentage > 0
-              ) {
-                discountPercentage = batchItem.rescue_discount_percentage;
-              } else if (
-                !batchItem.rescue_pricing_enabled &&
-                batchItem.manual_discount_percentage > 0
-              ) {
-                discountPercentage = batchItem.manual_discount_percentage;
-              }
-
-              const originalPrice = productUnit.price;
-              if (discountPercentage > 0) {
-                const discountedPrice = Math.round(
-                  (originalPrice * (100 - discountPercentage)) / 100,
-                );
-                const savingsPerUnit = originalPrice - discountedPrice;
-
-                rescuePricing = {
-                  isAvailable: true,
-                  originalPrice: originalPrice,
-                  discountPercentage,
-                  discountedPrice: discountedPrice,
-                  savings: savingsPerUnit * item.quantity,
-                };
-              }
+            if (pricingDetail.discounted_quantity > 0) {
+              const discountedUnitPrice =
+                pricingDetail.allocations.find((part) => part.is_discounted)
+                  ?.unit_price || productUnit.price;
+              rescuePricing = {
+                isAvailable: true,
+                originalPrice: pricingDetail.original_unit_price,
+                discountPercentage: pricingDetail.display_discount_percentage,
+                discountedPrice: discountedUnitPrice,
+                savings: pricingDetail.line_savings,
+              };
             }
+          } catch (previewError) {
+            pricingDetail.available_quantity =
+              await this.getAvailableBatchQuantity(product._id, unit._id);
+            pricingDetail.error_message =
+              previewError.message || "Tồn kho đã thay đổi";
           }
         }
 
@@ -237,6 +404,7 @@ class CartService {
           productUnit,
           unit,
           rescuePricing,
+          pricing_detail: pricingDetail,
         };
       }),
     );
