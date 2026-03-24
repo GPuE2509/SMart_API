@@ -50,6 +50,12 @@ const payslipSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    period_start_date: {
+      type: Date,
+    },
+    period_end_date: {
+      type: Date,
+    },
     // Working hours data
     total_work_hours: {
       type: Number,
@@ -139,7 +145,14 @@ const payslipSchema = new mongoose.Schema(
   },
 );
 
-// Prevent duplicate payslip for same user/month/year
-payslipSchema.index({ user_id: 1, month: 1, year: 1 }, { unique: true });
+// Prevent duplicate payslip for the same user and exact payroll period.
+// This allows multiple payslips in the same month when using different date ranges.
+payslipSchema.index(
+  { user_id: 1, period_start_date: 1, period_end_date: 1 },
+  { unique: true },
+);
+
+// Support report and list filtering by month/year.
+payslipSchema.index({ month: 1, year: 1, user_id: 1 });
 
 module.exports = mongoose.model("Payslip", payslipSchema);
