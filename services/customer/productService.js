@@ -59,19 +59,14 @@ const productService = {
         page = 1,
         limit = 20,
       } = filters;
+      const normalizedSearch = String(search || "")
+        .trim()
+        .toLocaleLowerCase();
 
       // Build query
       const query = {
         is_active: true, // Only show active products
       };
-
-      // Search by name or description
-      if (search) {
-        query.$or = [
-          { name: { $regex: search, $options: "i" } },
-          { description: { $regex: search, $options: "i" } },
-        ];
-      }
 
       // Filter by category
       if (category_id) {
@@ -99,6 +94,7 @@ const productService = {
           .lean();
 
         product.units = units;
+        product.available_stock = 0;
 
         // Calculate price range
         if (units.length > 0) {
@@ -126,6 +122,13 @@ const productService = {
           for (let batch of batches) {
             for (let item of batch.items) {
               const discountPercentage = getBatchItemDiscountPercentage(item);
+
+              if (
+                item.product_id.toString() === product._id.toString() &&
+                isBatchItemSellable(item)
+              ) {
+                product.available_stock += Number(item.current_quantity || 0);
+              }
 
               if (
                 item.product_id.toString() === product._id.toString() &&
@@ -173,6 +176,28 @@ const productService = {
             quantity: Number(quantity || 0),
           }))
           .sort((a, b) => b.discount_percentage - a.discount_percentage);
+      }
+
+      // Only show products customers can actually buy now.
+      products = products.filter(
+        (product) =>
+          Array.isArray(product.units) &&
+          product.units.length > 0 &&
+          Number(product.available_stock || 0) > 0,
+      );
+
+      // Case-insensitive discovery search on product text fields.
+      if (normalizedSearch) {
+        products = products.filter((product) => {
+          const name = String(product.name || "").toLocaleLowerCase();
+          const description = String(
+            product.description || "",
+          ).toLocaleLowerCase();
+          return (
+            name.includes(normalizedSearch) ||
+            description.includes(normalizedSearch)
+          );
+        });
       }
 
       // Filter by price range if specified (BEFORE pagination)
@@ -349,7 +374,12 @@ const productService = {
    */
   getFeatured: async (limit = 10) => {
     try {
-      // Get latest active products as featured
+      // Get active products and then keep only items customers can buy now.
+      const requestedLimit = parseInt(limit);
+      const fetchLimit = Number.isNaN(requestedLimit)
+        ? 20
+        : Math.max(requestedLimit * 3, requestedLimit, 20);
+
       let products = await Product.find({
         is_active: true,
       })
@@ -358,7 +388,7 @@ const productService = {
           select: "name description image_url",
         })
         .sort({ createdAt: -1 })
-        .limit(parseInt(limit))
+        .limit(fetchLimit)
         .lean();
 
       // Get product units for each product
@@ -371,7 +401,37 @@ const productService = {
           .lean();
 
         product.units = units;
+
+        // Aggregate total sellable stock across all eligible batch items.
+        let availableStock = 0;
+        const batches = await ProductBatch.find({
+          "items.product_id": product._id,
+          "items.status": "onsale",
+          is_deleted: false,
+        }).lean();
+
+        for (let batch of batches) {
+          for (let item of batch.items) {
+            if (
+              item.product_id.toString() === product._id.toString() &&
+              isBatchItemSellable(item)
+            ) {
+              availableStock += Number(item.current_quantity || 0);
+            }
+          }
+        }
+
+        product.available_stock = availableStock;
       }
+
+      products = products
+        .filter(
+          (product) =>
+            Array.isArray(product.units) &&
+            product.units.length > 0 &&
+            Number(product.available_stock || 0) > 0,
+        )
+        .slice(0, Number.isNaN(requestedLimit) ? 10 : requestedLimit);
 
       return {
         success: true,
