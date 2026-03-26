@@ -8,7 +8,7 @@ const productController = {
   getAll: async (req, res) => {
     try {
       const filters = {
-        search: req.query.search,
+        search: req.query.search || req.query.q,
         category_id: req.query.category_id,
         min_price: req.query.min_price,
         max_price: req.query.max_price,
