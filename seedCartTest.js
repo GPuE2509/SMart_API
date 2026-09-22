@@ -24,14 +24,14 @@ async function seedCartTest() {
     // ==================== 1. TÌM USER ====================
     console.log("👤 Tìm user...");
     const testUser = await User.findOne({
-      email: "mocan.naturalsoap@gmail.com",
+      email: "test.customer@smart.com",
     });
 
     if (!testUser) {
-      console.error("   ❌ Không tìm thấy user: mocan.naturalsoap@gmail.com");
+      console.error("   ❌ Không tìm thấy user: test.customer@smart.com");
       process.exit(1);
     }
-    console.log("   ✅ Đã tìm thấy user: mocan.naturalsoap@gmail.com");
+    console.log("   ✅ Đã tìm thấy user: test.customer@smart.com");
 
     // ==================== 2. TẠO UNITS ====================
     console.log("\n📏 Tạo đơn vị tính...");
@@ -255,7 +255,7 @@ async function seedCartTest() {
     console.log("=".repeat(60));
 
     console.log("\n📱 ĐĂNG NHẬP MOBILE APP:");
-    console.log("   Email: mocan.naturalsoap@gmail.com");
+    console.log("   Email: test.customer@smart.com");
 
     console.log("\n🛒 GIỎ HÀNG ĐÃ CÓ:");
     console.log(`   - ${cartProducts.length} sản phẩm`);
